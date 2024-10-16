@@ -439,6 +439,14 @@ nrow(GSE7895_CS_NS_GEO2R_limma_sig)
 
 #####
 
+## 1.6 Save outputs
+```{r}
+
+write.table(GSE7895_CS_NS_GEO2R_limma_sig, "../2_Outputs/GSE7895_CS_NS_GEO2R_limma_sig.txt", sep = '\t')
+
+```
+
+
 # 2. Differential expression analysis of TCGA-LUAD tumor vs normal tissue (T-E)
 
 ## 2.1 Loading dataset, formatting as tumor-normal pairs
