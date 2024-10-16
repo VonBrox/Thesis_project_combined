@@ -1,0 +1,1864 @@
+---
+title: "CS_NS_GEO2R_limma_combined_script"
+output: html_document
+date: "2024-07-09"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+This script outlines the calculation of differentially-expressed genes (DEGs) between current and never smokers for each of the datasets. 
+This is adapted from the default GEO2R script used for differential analysis, as obtained from the GEO platform.
+This analysis always begins with the series matrix rather than the raw .CEL files in these calculations. (So, it is worth checking what preprocessing went into each of the series matrices.)
+The adaptations are based on the instructional video at this link: https://www.youtube.com/watch?v=A07xnSe7OTg
+The instructor explains how to use QC plots to check the data in a stepwise manner rather than using the default settings and trusting the output. DEGs are displayed as volcano plots.
+
+Each dataset follows a standard limma pipeline to compare current vs. never smokers with the following variations:
+1. log2 normalization (if needed - used in some cases here)
+2. quantile normalization (used in all cases here)
+3. vooma (used in all cases here)
+
+To summarize the datasets, the normalization applied, and the remaining potential issues based on QC plots:
+[Note: I should go back to check for redundant samples between studies from the same groups, or check how I dealt with that before]
+
+GSE4302:
+- 44 samples
+- 3050 DEGs
+- quantile normalization
+- Not clean separation in PCA
+- Skewed towards low FDR values
+
+GSE7895 (note this is my reference "CS/FS/NS" dataset):
+- 72 samples
+- 681 DEGs
+- quantile normalization
+- Not clean separation in PCA
+
+GSE14633:
+- 20 samples
+- 247 DEGs
+- quantile normalization
+- No QC issues that I can see
+
+GSE19027:
+- 30 samples
+- 1832 DEGs
+- log2 and quantile normalization
+- Not clean separation in PCA
+- Skewed towards low FDR values
+
+GSE20257:
+- 95 samples
+- 2331 DEGs
+- log2 and quantile normalization
+- PCA could suggest batch effect or confounder (2 distinct clusters not based on smoking status)
+- Skewed towards low FDR values 
+
+GSE63127 (note this is my reference "CS vs NS" dataset):
+- 182 samples
+- 6270 DEGs
+- log2 and quantile normalization
+- PCA could suggest batch effect or confounder (4 distinct clusters not based on smoking status)
+- Skewed towards low FDR values
+
+
+# GSE4302
+
+## Load samples from GEO
+
+```{r}
+# Version info: R 4.2.2, Biobase 2.58.0, GEOquery 2.66.0, limma 3.54.0
+################################################################
+#   Differential expression analysis with limma
+library(GEOquery)
+library(limma)
+library(dplyr)
+
+# load series and platform data from GEO
+
+gset <- getGEO("GSE4302", GSEMatrix =TRUE, AnnotGPL=TRUE)
+if (length(gset) > 1) idx <- grep("GPL570", attr(gset, "names")) else idx <- 1
+gset <- gset[[idx]]
+
+# make proper column names to match toptable 
+fvarLabels(gset) <- make.names(fvarLabels(gset))
+
+# group membership for all samples
+gsms <- paste0("XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+               "XXXXXXXXXXXXXX100X0X000XXX000X000X0XXX001110001100",
+               "000001111101101110")
+sml <- strsplit(gsms, split="")[[1]]
+
+# filter out excluded samples (marked as "X")
+sel <- which(sml != "X")
+sml <- sml[sel]
+gset <- gset[ ,sel]
+
+gset <- gset[complete.cases(exprs(gset)), ] # skip missing values
+
+```
+
+## Checks and normalization
+
+```{r}
+## Make histograms and boxplots to check if the data is log-transformed and needs quantile normalization ##
+hist(as.matrix(exprs(gset))) # Looks ok
+boxplot(exprs(gset)) # Looks ok
+max(exprs(gset)) # 14.29166
+min(exprs(gset)) # 3.490193
+# 3.49 is an odd minimum
+# Based on above, just need quantile normalization
+
+exprs(gset) <- normalizeBetweenArrays(exprs(gset)) # quantile normalization
+boxplot(exprs(gset)) # Looks ok
+max(exprs(gset)) # 14.08906
+min(exprs(gset)) # 3.568253
+
+```
+
+## Set up design matrix
+
+```{r}
+
+# assign samples to groups and set up design matrix
+gs <- factor(sml)
+groups <- make.names(c("healthy_control","current_smoker"))
+levels(gs) <- groups
+gset$group <- gs
+design <- model.matrix(~group + 0, gset)
+colnames(design) <- levels(gs)
+```
+
+## PCA plot, and save expression data
+
+```{r}
+
+## Plot PCA ##
+colz <- as.numeric(as.factor(gs)) # Get color values from group
+plotMDS(exprs(gset),
+        gene.selection = "common",
+        main = "PCA for CS vs NS GSE4302",
+        col = colz,
+        #labels = gs
+        pch = 1
+)
+# Some separation though not clean
+
+
+# Saving expression data for GSE4302
+GSE4302_expr_matrix <- exprs(gset)  # Extract the expression matrix
+GSE4302_sstat_data <- gset$group   # Extract the smoking status labels
+#Gene_Symbol <- gset@featureData@data[["Gene.symbol"]] # Get the gene symbols to replace probeset IDs with
+# Save the data
+# write.table(GSE4302_expr_matrix, "../../../Former_Smokers_Aim_1/2_Output/GEO2R_limma_analysis/GSE4302/GSE4302_expr_matrix.txt")
+# write.table(GSE4302_sstat_data, "../../../Former_Smokers_Aim_1/2_Output/GEO2R_limma_analysis/GSE4302/GSE4302_sstat_data.txt")
+
+```
+## Vooma and fit
+```{r}
+# calculate precision weights and show plot of mean-variance trend
+v <- vooma(gset, design, plot=T)
+# OR weights by group
+# v <- voomaByGroup(gset, group=groups, design, plot=T, cex=0.1, pch=".", col=1:nlevels(gs))
+v$genes <- fData(gset) # attach gene annotations
+
+# fit linear model
+fit  <- lmFit(v)
+```
+
+## Generate top table
+```{r}
+
+# set up contrasts of interest and recalculate model coefficients
+cts <- paste(groups[2], groups[1], sep="-")
+cont.matrix <- makeContrasts(contrasts=cts, levels=design)
+fit2 <- contrasts.fit(fit, cont.matrix)
+
+# compute statistics and table of top significant genes
+fit2 <- eBayes(fit2, 0.01)
+tT <- topTable(fit2, adjust="fdr", sort.by="B", number=Inf)
+
+tT <- subset(tT, select=c("ID","Gene.symbol","logFC","adj.P.Val"))
+
+# Filter unlabelled genes, duplicate genes
+GSE4302_CSvsNS_GEO2R_limma_all <- tT %>%
+  filter(Gene.symbol!= "") %>% # Remove blank gene symbols
+  group_by(Gene.symbol) %>%
+  slice_min(adj.P.Val, with_ties = TRUE) %>% 
+  # For probesets mapping to same gene, keep one with lowest FDR. Keep ties for now to check later.
+  ungroup()
+
+# Filter for FDR < 0.05
+GSE4302_CSvsNS_GEO2R_limma_sig <- GSE4302_CSvsNS_GEO2R_limma_all %>%
+  filter(adj.P.Val <= 0.05) # Remove FDR > 0.05 genes
+
+# Checking for ties
+ties <- GSE4302_CSvsNS_GEO2R_limma_sig %>%
+  group_by(Gene.symbol) %>%
+  filter(n() > 1) %>%
+  ungroup()
+print(ties)
+# Only tie is NQO1. Both probes have s suffix. I will arbitrarily choose the one of magnitude 1.56 rather than 1.50
+GSE4302_CSvsNS_GEO2R_limma_sig <- GSE4302_CSvsNS_GEO2R_limma_sig %>%
+  filter(ID != "201468_s_at") 
+
+head(GSE4302_CSvsNS_GEO2R_limma_sig)
+nrow(GSE4302_CSvsNS_GEO2R_limma_sig) # 3050 is a heckuva lot of genes for a small dataset...
+
+# Save the output (relative path was giving me issues)
+#write.table(GSE4302_CSvsNS_GEO2R_limma_sig, "/Users/liambrockley/Desktop/Former_Smokers_Project/Former_Smokers_Aim_1/2_Output/GEO2R_limma_analysis/GSE4302/GSE4302_CSvsNS_GEO2R_limma_sig.txt", 
+#            sep = '\t', col.names = TRUE, row.names = FALSE
+#)
+```
+
+
+## Checking P value distribution and Q-Q plot
+```{r}
+# Visualize and quality control test results.
+# Build histogram of P-values for all genes. Normal test
+# assumption is that most genes are not differentially expressed.
+hist(GSE4302_CSvsNS_GEO2R_limma_all$adj.P.Val, col = "grey", border = "white", xlab = "P-adj",
+     ylab = "Number of genes", main = "P-adj value distribution")
+# Definitely skewed towards significant genes
+hist(GSE4302_CSvsNS_GEO2R_limma_sig$adj.P.Val, col = "grey", border = "white", xlab = "P-adj",
+     ylab = "Number of genes", main = "P-adj value distribution")
+# Likewise a skew towards really significant genes within the significant genes
+
+# summarize test results as "up", "down" or "not expressed"
+dT <- decideTests(fit2, adjust.method="fdr", p.value=0.05, lfc=0)
+
+# create Q-Q plot for t-statistic
+t.good <- which(!is.na(fit2$F)) # filter out bad probes
+qqt(fit2$t[t.good], fit2$df.total[t.good], main="Moderated t statistic")
+```
+
+## Checking expression levels
+```{r}
+# General expression data analysis
+ex <- exprs(gset)
+
+# expression value distribution
+par(mar=c(4,4,2,1))
+title <- paste ("GSE4302", "/", annotation(gset), " value distribution", sep ="")
+plotDensities(ex, group=gs, main=title, legend ="topright")
+```
+
+## Volcano plot
+
+```{r}
+
+### Volcano plot ###
+
+library(ggplot2)
+library(ggrepel)
+library(ggpmisc)
+
+# Renaming generically for convenience
+DEGs <- GSE4302_CSvsNS_GEO2R_limma_all
+DEGs_significant <- GSE4302_CSvsNS_GEO2R_limma_sig
+
+GSE4302_CSvsNS_GEO2R_limma_volcano <- ggplot(DEGs, aes(x = logFC, y = -log10(adj.P.Val))) +
+  geom_point(aes(color = ifelse(adj.P.Val < 0.05, "red", "black")), alpha = 0.6, show.legend = FALSE) +
+  stat_dens2d_labels(data = DEGs_significant, 
+                     aes(label = Gene.symbol), geom = "text_repel", 
+                     size = 2, 
+                     position = position_nudge_centre(x = 0.1, 
+                                                      y = 0.1, 
+                                                      direction = "radial"),
+                     min.segment.length = 0,
+                     fontface = "bold") +
+  scale_color_manual(values = c("black", "red")) +
+  theme_minimal() +
+  labs(title = "DEGs in GSE4302 Current vs. Never Smokers",
+       x = "log2FC",
+       y = "-log10(FDR)",
+       caption = paste0("significant DEGs: n = ", nrow(DEGs_significant)))
+GSE4302_CSvsNS_GEO2R_limma_volcano
+```
+
+
+# GSE7895
+
+## Loading libraries and samplesfor differential expression analysis
+```{r}
+# Version info: R 4.2.2, Biobase 2.58.0, GEOquery 2.66.0, limma 3.54.0
+################################################################
+#   Differential expression analysis with limma
+
+### Modifying from GEO2R based on online tutorial: https://www.youtube.com/watch?v=A07xnSe7OTg
+
+library(GEOquery)
+library(limma)
+#library(umap) # According to online tutorial, umap is mainly only useful if there are ~100 samples
+library(dplyr)
+
+# load series and platform data from GEO
+gset <- getGEO("GSE7895", GSEMatrix =TRUE, AnnotGPL=TRUE)
+if (length(gset) > 1) idx <- grep("GPL96", attr(gset, "names")) else idx <- 1
+gset <- gset[[idx]]
+# make proper column names to match toptable 
+fvarLabels(gset) <- make.names(fvarLabels(gset))
+
+# group membership for all samples
+gsms <- paste0("00000000000000000000011111111111111111111111111111",
+               "1111111111111111111111XXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+               "XXXX")
+sml <- strsplit(gsms, split="")[[1]]
+
+# filter out excluded samples (marked as "X")
+sel <- which(sml != "X")
+sml <- sml[sel]
+gset <- gset[ ,sel]
+# Tutorial suggests not excluding samples, but I think you have to if they are not in the groups of interest
+length(sml) # 72 samples
+
+```
+
+## Checks and normalizations for log2 and quantile
+```{r}
+
+## Make histograms and boxplots to check if the data is log-transformed and needs quantile normalization ##
+
+hist(as.matrix(exprs(gset))) # Values range 1-15, and 1 big peak around 3. 
+boxplot(exprs(gset)) # Same range of values, with similar-looking ranges, but not exactly the same
+
+# Narrow range, therefore no log2 normalization needed
+# Boxplots similar but nor identical, therefore quantile normalization needed (standard)
+
+exprs(gset) <- normalizeBetweenArrays(exprs(gset)) # quantile normalization
+boxplot(exprs(gset)) # Now the boxplots look exactly the same
+min(exprs(gset)) # -0.2121706
+max(exprs(gset)) # 14.55543
+
+```
+
+## Setting the two groups to compare, current vs never smokers, in design matrix
+```{r}
+# Setting the two groups to compare, current vs never smokers.
+gs <- factor(sml)
+groups <- make.names(c("never_smoker","current_smoker"))
+levels(gs) <- groups
+gset$group <- gs
+# Make design matrix
+design <- model.matrix(~group + 0, gset)
+colnames(design) <- levels(gs)
+```
+
+## PCA plot to check for group separation, and saving the expression data
+```{r}
+## Plot PCA ##
+colz <- as.numeric(as.factor(gs)) # Get color values from group
+plotMDS(exprs(gset),
+        gene.selection = "common",
+        main = "PCA for CS vs NS GSE7895",
+        col = colz,
+        labels = gs
+        )
+# Separation doesn't look perfect here, but definitely a light split.
+
+# Saving expression data for GSE7895
+# GSE7895_expr_matrix <- exprs(gset)  # Extract the expression matrix
+# GSE7895_sstat_data <- gset$group   # Extract the smoking status labels
+# #Gene_Symbol <- gset@featureData@data[["Gene.symbol"]] # Get the gene symbols to replace probeset IDs with
+# # Save the data
+# write.table(GSE7895_expr_matrix, "../../../Former_Smokers_Aim_1/2_Output/GEO2R_limma_analysis/GSE7895/GSE7895_expr_matrix.txt")
+# write.table(GSE7895_sstat_data, "../../../Former_Smokers_Aim_1/2_Output/GEO2R_limma_analysis/GSE7895/GSE7895_sstat_data.txt")
+```
+
+## Checking the variance vs. mean value dispersion to see whether vooma is necessary, performing vooma, then main DEG calculation:
+```{r}
+gset <- gset[complete.cases(exprs(gset)), ] # skip missing values
+
+fit <- lmFit(gset, design)
+#fit
+
+## plot dispersion
+plotSA(fit, main = "Fit")
+
+# It looks very irregular, therefore use vooma.
+
+# calculate precision weights and show plot of mean-variance trend
+v <- vooma(gset, design, plot=T)
+# OR weights by group
+# v <- voomaByGroup(gset, group=groups, design, plot=T, cex=0.1, pch=".", col=1:nlevels(gs))
+v$genes <- fData(gset) # attach gene annotations
+fitV <- lmFit(v, design) # Fit based on voom
+
+## ** Check on the "weights by group" thing
+# I checked, and it appears the curves for both groups look pretty much the same? 
+# So I'm thinking it's not needed?
+
+# set up contrasts of interest and recalculate model coefficients
+cts <- paste(groups[2], groups[1], sep="-") # Swapped 2 and 1 to make the comparison in the correct direction
+cont.matrix <- makeContrasts(contrasts=cts, levels=design)
+fit2 <- contrasts.fit(fitV, cont.matrix)
+
+# compute statistics and table of top significant genes
+fit2 <- eBayes(fit2, proportion = 0.01) # Proportion is "assumed proportion of genes which are differentially expressed"
+tT <- topTable(fit2, adjust="fdr", sort.by="B", number=Inf) # Inf shows all the significant genes
+
+tT <- subset(tT, select=c("ID","Gene.symbol","logFC","adj.P.Val"))
+head(tT)
+```
+
+## Processing and filtering top table to genes of interest
+```{r}
+
+# Now I want to filter unlabelled genes, duplicate genes, and adj.P.Val < 0.05
+GSE7895_CSvsNS_GEO2R_limma_all <- tT %>%
+  filter(Gene.symbol != "") %>% # Remove blank gene symbols
+#  filter(adj.P.Val <= 0.05) %>% # Remove FDR > 0.05 genes
+  group_by(Gene.symbol) %>%
+  slice_min(adj.P.Val, with_ties = TRUE) %>% 
+  # For probesets mapping to same gene, keep one with lowest FDR. Keep ties for now to check later.
+  ungroup()
+head(GSE7895_CSvsNS_GEO2R_limma_all)
+
+GSE7895_CSvsNS_GEO2R_limma_sig <- GSE7895_CSvsNS_GEO2R_limma_all %>%
+  filter(adj.P.Val <= 0.05) # Remove FDR > 0.05 genes
+head(GSE7895_CSvsNS_GEO2R_limma_sig)
+
+# Checking for ties
+ties <- GSE7895_CSvsNS_GEO2R_limma_sig %>%
+  group_by(Gene.symbol) %>%
+  filter(n() > 1) %>%
+  ungroup()
+print(ties)
+# The only gene with a tie is MUC5AC, with a log2FC of 2.42 versus 2.46.
+# One of the 2 probe IDs has an 'x' suffix.
+# See the description of suffixes at https://rmflight.github.io/affyMM/
+# Given this, I will decide to remove the one with the 'x' suffix.
+GSE7895_CSvsNS_GEO2R_limma_sig <- GSE7895_CSvsNS_GEO2R_limma_sig %>%
+  filter(ID != '214303_x_at')
+head(GSE7895_CSvsNS_GEO2R_limma_sig)
+
+# **Note: Maybe I should be taking the suffixes into account in the initial filtering? As I think I did a while back? To look into.
+
+
+# Save this output
+# write.table(GSE7895_CSvsNS_GEO2R_limma_sig, file='/Users/liambrockley/Desktop/Former_Smokers_Project/Former_Smokers_Aim_1/2_Output/GEO2R_limma_analysis/GSE7895/GSE7895_CS_NS_GEO2R_limma_sig.txt', row.names=FALSE, sep="\t")
+
+```
+
+## More plots for QC (not strictly necessary, and some would need modification)
+
+```{r}
+# Visualize and quality control test results.
+# Build histogram of P-values for all genes. Normal test
+# assumption is that most genes are not differentially expressed.
+hist(GSE7895_CSvsNS_GEO2R_limma_all$adj.P.Val, col = "grey", border = "white", xlab = "P-adj",
+     ylab = "Number of genes", main = "P-adj value distribution")
+# Looks like most genes are not significant. Good.
+
+# create Q-Q plot for t-statistic
+t.good <- which(!is.na(fit2$F)) # filter out bad probes
+qqt(fit2$t[t.good], fit2$df.total[t.good], main="Moderated t statistic")
+
+# summarize test results as "up", "down" or "not expressed"
+dT <- decideTests(fit2, adjust.method="fdr", p.value=0.05, lfc=0)
+```
+
+# Some extra general expression data analysis
+```{r}
+ex <- exprs(gset)
+
+# box-and-whisker plot
+ord <- order(gs)  # order samples by group
+palette(c("#1B9E77", "#7570B3"))
+par(mar=c(7,4,2,1))
+title <- paste ("GSE7895", "/", annotation(gset), sep ="")
+boxplot(ex[,ord], boxwex=0.6, notch=T, main=title, outline=FALSE, las=2, col=gs[ord])
+legend("topright", groups, fill=palette(), bty="n")
+
+# expression value distribution
+par(mar=c(4,4,2,1))
+title <- paste ("GSE7895", "/", annotation(gset), " value distribution", sep ="")
+plotDensities(ex, group=gs, main=title, legend ="topright")
+```
+
+## Making a more representative volcano plot
+
+```{r}
+
+library(ggplot2)
+library(ggrepel)
+library(ggpmisc)
+
+# Renaming generically for convenience
+DEGs <- GSE7895_CSvsNS_GEO2R_limma_all
+DEGs_significant <- GSE7895_CSvsNS_GEO2R_limma_sig
+
+GSE7895_CSvsNS_GEO2R_limma_volcano <- ggplot(DEGs, aes(x = logFC, y = -log10(adj.P.Val))) +
+  geom_point(aes(color = ifelse(adj.P.Val < 0.05, "red", "black")), alpha = 0.6, show.legend = FALSE) +
+  stat_dens2d_labels(data = DEGs_significant, 
+                     aes(label = Gene.symbol), geom = "text_repel", 
+                     size = 2, 
+                     position = position_nudge_centre(x = 0.1, 
+                                                      y = 0.1, 
+                                                      direction = "radial"),
+                     min.segment.length = 0,
+                     fontface = "bold") +
+  scale_color_manual(values = c("black", "red")) +
+  theme_minimal() +
+  labs(title = "DEGs in GSE7895 Current vs. Never Smokers",
+       x = "log2FC",
+       y = "-log10(FDR)",
+       caption = paste0("significant DEGs: n = ", nrow(DEGs_significant)))
+GSE7895_CSvsNS_GEO2R_limma_volcano
+```
+
+# GSE14633
+
+## Load libraries and samples
+```{r}
+# Version info: R 4.2.2, Biobase 2.58.0, GEOquery 2.66.0, limma 3.54.0
+################################################################
+#   Differential expression analysis with limma
+library(GEOquery)
+library(limma)
+library(stringr)
+
+# load series and platform data from GEO
+
+gset <- getGEO("GSE14633", GSEMatrix =TRUE, AnnotGPL=FALSE)
+if (length(gset) > 1) idx <- grep("GPL5175", attr(gset, "names")) else idx <- 1
+gset <- gset[[idx]]
+
+# make proper column names to match toptable 
+fvarLabels(gset) <- make.names(fvarLabels(gset))
+
+# group membership for all samples
+gsms <- "1X11111111100000000X00"
+sml <- strsplit(gsms, split="")[[1]]
+
+# filter out excluded samples (marked as "X")
+sel <- which(sml != "X")
+sml <- sml[sel]
+gset <- gset[ ,sel]
+
+gset <- gset[complete.cases(exprs(gset)), ]
+length(sml) # 20 samples
+```
+
+## Boxplots and histograms for normalization checks
+```{r}
+
+## Make histograms and boxplots to check if the data is log-transformed and needs quantile normalization ##
+
+hist(as.matrix(exprs(gset))) # Looks OK although odd that it starts at 4?
+boxplot(exprs(gset)) # Looks decent with a few genes popping out 
+max(exprs(gset)) 
+min(exprs(gset)) 
+# 4 seems like an odd minimum. It has probably been transformed somehow. Something to keep in mind if there are issues.
+
+# Based on graphs above, I should do quantile normalization but not log2 normalization.
+
+```
+
+## Quantile normalization
+```{r}
+
+## Quantile normalization ##
+exprs(gset) <- normalizeBetweenArrays(exprs(gset)) # quantile normalization
+
+hist(as.matrix(exprs(gset))) # still good
+boxplot(exprs(gset)) # Now identical. Why is one gene popping out there?
+min(exprs(gset)) # 4 
+max(exprs(gset)) # 13.29
+
+# Again, 4 is an odd minimum.
+
+```
+
+## Assign samples to groups and set up design matrix
+```{r}
+# Assign samples to groups and set up design matrix
+gs <- factor(sml)
+groups <- make.names(c("never_smoker","current_smoker"))
+levels(gs) <- groups
+gset$group <- gs
+
+# Make design matrix
+design <- model.matrix(~group + 0, gset)
+colnames(design) <- levels(gs)
+```
+
+## Plot PCA, save expression data
+```{r}
+## Plot PCA ##
+colz <- as.numeric(as.factor(gs)) # Get color values from group
+plotMDS(exprs(gset),
+        gene.selection = "common",
+        main = "PCA for CS vs NS GSE19027",
+        col = colz,
+        labels = gs
+)
+# Definite clean separation here!
+
+# Saving expression data for GSE14633
+# GSE14633_expr_matrix <- exprs(gset)  # Extract the expression matrix
+# GSE14633_sstat_data <- gset$group   # Extract the smoking status labels
+# #Gene_Symbol <- gset@featureData@data[["Gene.symbol"]] # Get the gene symbols to replace probeset IDs with
+# # Save the data
+# write.table(GSE14633_expr_matrix, "../../../Former_Smokers_Aim_1/2_Output/GEO2R_limma_analysis/GSE14633/GSE14633_expr_matrix.txt")
+# write.table(GSE14633_sstat_data, "../../../Former_Smokers_Aim_1/2_Output/GEO2R_limma_analysis/GSE14633/GSE14633_sstat_data.txt")
+
+
+```
+
+## Fit linear model
+```{r}
+
+
+## Try a normal fit ##
+fit <- lmFit(gset, design)
+plotSA(fit, main = "Fit") ## plot dispersion
+#That's a weird-looking mean-variance graph, therefore vooma is needed
+
+# calculate precision weights and show plot of mean-variance trend
+v <- vooma(gset, design, plot=T)
+# OR weights by group
+# v <- voomaByGroup(gset, group=groups, design, plot=T, cex=0.1, pch=".", col=1:nlevels(gs))
+v$genes <- fData(gset) # attach gene annotations
+
+# fit linear model
+fit  <- lmFit(v)
+```
+
+## DEGs calculation
+```{r}
+library(dplyr)
+
+# set up contrasts of interest and recalculate model coefficients
+cts <- c(paste(groups[2],"-",groups[1],sep="")) # Swapped 2 and 1 because this is the desired direction
+cont.matrix <- makeContrasts(contrasts=cts, levels=design)
+fit2 <- contrasts.fit(fit, cont.matrix)
+
+# compute statistics and table of top significant genes
+fit2 <- eBayes(fit2, 0.01)
+tT <- topTable(fit2, adjust="fdr", sort.by="B", number=Inf)
+
+tT <- subset(tT, select=c("ID","gene_assignment","logFC","adj.P.Val"))
+
+head(tT)
+
+### Extract the simple gene names from the gene_assignment column ###
+
+#Extract simple gene symbols and put them into gene_symbols
+gene_symbols <- str_match_all(tT$gene_assignment, "//\\s*(.*?)\\s*//")
+
+#Put the simple gene symbols back into their respective spots
+for (i in 1:length(gene_symbols)){
+  tT$gene_assignment[i] <- gene_symbols[[i]][1]
+}
+
+# Turn the column from list into a character vector
+tT$gene_assignment <- unlist(tT$gene_assignment)
+
+# Remove backslashes and surrounding whitespace
+for (i in 1:length(tT$gene_assignment)){
+  tT$gene_assignment[i] <- gsub("//\\s*(.*?)\\s*//", "\\1", tT$gene_assignment[i])
+}
+
+head(tT)
+
+# Filter unlabelled genes, duplicate genes, and adj.P.Val < 0.05
+GSE14633_CSvsNS_GEO2R_limma_all <- tT %>%
+  filter(gene_assignment!= "") %>% # Remove blank gene symbols
+ # filter(adj.P.Val <= 0.05) %>% # Remove FDR > 0.05 genes
+  group_by(gene_assignment) %>%
+  slice_min(adj.P.Val, with_ties = TRUE) %>% 
+  # For probesets mapping to same gene, keep one with lowest FDR. Keep ties for now to check later.
+  ungroup()
+
+GSE14633_CSvsNS_GEO2R_limma_sig <- GSE14633_CSvsNS_GEO2R_limma_all %>%
+  filter(adj.P.Val <= 0.05)
+
+# Checking for ties
+ties <- GSE14633_CSvsNS_GEO2R_limma_sig %>%
+  group_by(gene_assignment) %>%
+  filter(n() > 1) %>%
+  ungroup()
+print(ties) 
+# No ties
+
+head(GSE14633_CSvsNS_GEO2R_limma_sig)
+
+## Save table
+
+#write.table(GSE14633_CSvsNS_GEO2R_limma_sig, file='/Users/liambrockley/Desktop/Former_Smokers_Project/Former_Smokers_Aim_1/2_Output/GEO2R_limma_analysis/GSE14633/GSE14633_CS_NS_GEO2R_limma_sig.txt', row.names=FALSE, sep="\t")
+
+```
+
+## Visualize and quality control test results.
+```{r}
+# Visualize and quality control test results.
+# Build histogram of P-values for all genes. Normal test
+# assumption is that most genes are not differentially expressed.
+hist(GSE14633_CSvsNS_GEO2R_limma_all$adj.P.Val, col = "grey", border = "white", xlab = "P-adj",
+     ylab = "Number of genes", main = "P-adj value distribution")
+# This is probably good, insignificant genes are a vast majority.
+
+# summarize test results as "up", "down" or "not expressed"
+dT <- decideTests(fit2, adjust.method="fdr", p.value=0.05, lfc=0)
+
+# create Q-Q plot for t-statistic
+t.good <- which(!is.na(fit2$F)) # filter out bad probes
+qqt(fit2$t[t.good], fit2$df.total[t.good], main="Moderated t statistic")
+
+```
+
+## General expression data analysis
+```{r}
+# General expression data analysis
+ex <- exprs(gset)
+
+# box-and-whisker plot
+ord <- order(gs)  # order samples by group
+palette(c("#1B9E77", "#7570B3"))
+par(mar=c(7,4,2,1))
+title <- paste ("GSE14633", "/", annotation(gset), sep ="")
+boxplot(ex[,ord], boxwex=0.6, notch=T, main=title, outline=FALSE, las=2, col=gs[ord])
+legend("topleft", groups, fill=palette(), bty="n")
+
+# expression value distribution
+par(mar=c(4,4,2,1))
+title <- paste ("GSE14633", "/", annotation(gset), " value distribution", sep ="")
+plotDensities(ex, group=gs, main=title, legend ="topright")
+```
+
+## Volcano plot ##
+```{r}
+## Volcano plot ##
+
+library(ggplot2)
+library(ggrepel)
+library(ggpmisc)
+library(dplyr)
+
+# Renaming generically for convenience
+DEGs <- GSE14633_CSvsNS_GEO2R_limma_all
+DEGs_significant <- GSE14633_CSvsNS_GEO2R_limma_sig
+
+GSE14633_CSvsNS_GEO2R_limma_volcano <- ggplot(DEGs, aes(x = logFC, y = -log10(adj.P.Val))) +
+  geom_point(aes(color = ifelse(adj.P.Val < 0.05, "red", "black")), alpha = 0.6, show.legend = FALSE) +
+  stat_dens2d_labels(data = DEGs_significant, 
+                     aes(label = gene_assignment), geom = "text_repel", 
+                     size = 2, 
+                     position = position_nudge_centre(x = 0.1, 
+                                                      y = 0.1, 
+                                                      direction = "radial"),
+                     min.segment.length = 0,
+                     fontface = "bold") +
+  scale_color_manual(values = c("black", "red")) +
+  theme_minimal() +
+  labs(title = "DEGs in GSE14633 Current vs. Never Smokers",
+       x = "log2FC",
+       y = "-log10(FDR)",
+       caption = paste0("significant DEGs: n = ", nrow(DEGs_significant)))
+GSE14633_CSvsNS_GEO2R_limma_volcano
+```
+
+# GSE19027
+
+## Loading libraries and samples for differential expression analysis
+```{r}
+# Version info: R 4.2.2, Biobase 2.58.0, GEOquery 2.66.0, limma 3.54.0
+################################################################
+#   Differential expression analysis with limma
+library(GEOquery)
+library(limma)
+library(dplyr)
+
+# load series and platform data from GEO
+
+gset <- getGEO("GSE19027", GSEMatrix =TRUE, AnnotGPL=TRUE)
+if (length(gset) > 1) idx <- grep("GPL96", attr(gset, "names")) else idx <- 1
+gset <- gset[[idx]]
+
+# make proper column names to match toptable 
+fvarLabels(gset) <- make.names(fvarLabels(gset))
+
+# group membership for all samples
+gsms <- "11000000X1XX011X11111XXXXXXXXXXXX111111XX11XXXXXX1X1010XXXXX"
+sml <- strsplit(gsms, split="")[[1]]
+
+# filter out excluded samples (marked as "X")
+sel <- which(sml != "X")
+sml <- sml[sel]
+gset <- gset[ ,sel]
+
+gset <- gset[complete.cases(exprs(gset)), ] # skip missing values (I am doing this early on -- should check that's okay)
+length(sml) # 30 samples
+```
+
+## Check for normalization with histogram and boxplot
+```{r}
+# Make histograms and boxplots to check if the data is log-transformed and needs quantile normalization ##
+
+hist(as.matrix(exprs(gset))) # Very weird: peak close to zero and ranges past 6K 
+boxplot(exprs(gset)) # Very weird: everything is squished close to zero
+# Note that there appear to be outlier samples. Keep in mind if anything downstream seems iffy.
+max(exprs(gset)) # 71142.7
+min(exprs(gset)) # 0
+# Check the log2 transform
+hist(log2(as.matrix(exprs(gset)))) # wow much much better
+boxplot(log2(exprs(gset))) # Better but it still looks a bit off to me. The samples still differ quite a bit
+# Keep that in mind if there are issues downstream.
+
+# Based on graphs above, I should do log2FC and quantile normalization.
+```
+
+## log2FC and quantile normalization
+```{r}
+
+## log2FC and quantile normalization ##
+exprs(gset) <- log2(exprs(gset)+1) # log2 normalization, add +1 to avoid -Inf
+exprs(gset) <- normalizeBetweenArrays(exprs(gset)) # quantile normalization
+
+hist(as.matrix(exprs(gset))) # Much better
+boxplot(exprs(gset)) # They look very similar but not exactly the same?
+min(exprs(gset)) # 0.2893563 
+max(exprs(gset)) # 13.91007
+```
+
+## assign samples to groups and set up design matrix
+```{r}
+
+# assign samples to groups and set up design matrix
+gs <- factor(sml)
+groups <- make.names(c("never_smoker","current_smoker"))
+levels(gs) <- groups
+gset$group <- gs
+```
+
+## Plot PCA, save expression data ##
+```{r}
+colz <- as.numeric(as.factor(gs)) # Get color values from group
+plotMDS(exprs(gset),
+        gene.selection = "common",
+        main = "PCA for CS vs NS GSE19027",
+        col = colz,
+        labels = gs
+)
+# Some separation but not clean separation
+
+# Saving expression data for GSE19027
+# GSE19027_expr_matrix <- exprs(gset)  # Extract the expression matrix
+# GSE19027_sstat_data <- gset$group   # Extract the smoking status labels
+# #Gene_Symbol <- gset@featureData@data[["Gene.symbol"]] # Get the gene symbols to replace probeset IDs with
+# # Save the data
+# write.table(GSE19027_expr_matrix, "../../../Former_Smokers_Aim_1/2_Output/GEO2R_limma_analysis/GSE19027/GSE19027_expr_matrix.txt")
+# write.table(GSE19027_sstat_data, "../../../Former_Smokers_Aim_1/2_Output/GEO2R_limma_analysis/GSE19027/GSE19027_sstat_data.txt")
+```
+
+## Fit check and vooma fit
+```{r}
+
+# Make design matrix
+design <- model.matrix(~group + 0, gset)
+colnames(design) <- levels(gs)
+
+## Try a normal fit ##
+fit <- lmFit(gset, design)
+plotSA(fit, main = "Fit") ## plot dispersion
+#That's a weird-looking mean-variance graph, therefore vooma is needed
+
+## Do a vooma fit ##
+# calculate precision weights and show plot of mean-variance trend
+v <- vooma(gset, design, plot=T)
+# OR weights by group
+# v <- voomaByGroup(gset, group=groups, design, plot=T, cex=0.1, pch=".", col=1:nlevels(gs))
+v$genes <- fData(gset) # attach gene annotations
+
+# fit linear model with vooma
+fit  <- lmFit(v)
+
+```
+
+## Main DEG calculation steps
+
+```{r}
+
+# set up contrasts of interest and recalculate model coefficients
+cts <- c(paste(groups[2],"-",groups[1],sep="")) # Swapped 2 and 1 because this is the desired direction
+cont.matrix <- makeContrasts(contrasts=cts, levels=design)
+fit2 <- contrasts.fit(fit, cont.matrix)
+
+# compute statistics and table of top significant genes
+fit2 <- eBayes(fit2, 0.01)
+tT <- topTable(fit2, adjust="fdr", sort.by="B", number=Inf)
+
+tT <- subset(tT, select=c("ID","Gene.symbol","logFC","adj.P.Val"))
+
+# Now I want to filter unlabelled genes, duplicate genes, and adj.P.Val < 0.05
+GSE19027_CSvsNS_GEO2R_limma_all <- tT %>%
+  filter(Gene.symbol != "") %>% # Remove blank gene symbols
+#  filter(adj.P.Val <= 0.05) %>% # Remove FDR > 0.05 genes
+  group_by(Gene.symbol) %>%
+  slice_min(adj.P.Val, with_ties = TRUE) %>% 
+  # For probesets mapping to same gene, keep one with lowest FDR. Keep ties for now to check later.
+  ungroup()
+
+# filter to FDR < 0.05
+GSE19027_CSvsNS_GEO2R_limma_sig <- GSE19027_CSvsNS_GEO2R_limma_all %>%
+  filter(adj.P.Val <= 0.05) # Remove FDR > 0.05 genes
+
+# Checking for ties
+ties <- GSE19027_CSvsNS_GEO2R_limma_sig %>%
+  group_by(Gene.symbol) %>%
+  filter(n() > 1) %>%
+  ungroup()
+print(ties)
+# The only remaining tie is for MST1. Both probesets have the x suffix. 
+# The 2 values are -1.57 and -0.990
+# I will arbitrarily decide to keep the probe with -1.57 to err on the side of finding relevant genes.
+GSE19027_CSvsNS_GEO2R_limma_sig <- GSE19027_CSvsNS_GEO2R_limma_sig %>%
+  filter(ID != '216320_x_at')
+
+head(GSE19027_CSvsNS_GEO2R_limma_sig)
+nrow(GSE19027_CSvsNS_GEO2R_limma_sig)
+
+# Save output
+#write.table(GSE19027_CSvsNS_GEO2R_limma_sig, file='/Users/liambrockley/Desktop/Former_Smokers_Project/Former_Smokers_Aim_1/2_Output/GEO2R_limma_analysis/GSE19027/GSE19027_CS_NS_GEO2R_limma_sig.txt', row.names=FALSE, sep="\t")
+
+```
+
+## Visualize and quality control test results.
+Note that there seems to be something amiss with the FDR value distribution.
+```{r}
+
+## Visualize and quality control test results. #
+    
+hist(GSE19027_CSvsNS_GEO2R_limma_all$adj.P.Val, col = "grey", border = "white", xlab = "P-adj",
+     ylab = "Number of genes", main = "P-adj value distribution for all genes post-filter")
+# Definitely skewed disproportionately towards significant, low-FDR genes. To look into as a problem.
+
+
+# create Q-Q plot for t-statistic
+t.good <- which(!is.na(fit2$F)) # filter out bad probes
+qqt(fit2$t[t.good], fit2$df.total[t.good], main="Moderated t statistic")
+```
+
+## General expression data analysis
+```{r}
+# General expression data analysis
+ex <- exprs(gset)
+
+# box-and-whisker plot
+ord <- order(gs)  # order samples by group
+palette(c("#1B9E77", "#7570B3"))
+par(mar=c(7,4,2,1))
+title <- paste ("GSE19027", "/", annotation(gset), sep ="")
+boxplot(ex[,ord], boxwex=0.6, notch=T, main=title, outline=FALSE, las=2, col=gs[ord])
+legend("topleft", groups, fill=palette(), bty="n")
+
+# expression value distribution
+par(mar=c(4,4,2,1))
+title <- paste ("GSE19027", "/", annotation(gset), " value distribution", sep ="")
+plotDensities(ex, group=gs, main=title, legend ="topright")
+```
+
+## Volcano plot
+```{r}
+## Volcano plot ##
+
+library(ggplot2)
+library(ggrepel)
+library(ggpmisc)
+
+# Renaming generically for convenience
+DEGs <- GSE19027_CSvsNS_GEO2R_limma_all
+DEGs_significant <- GSE19027_CSvsNS_GEO2R_limma_sig
+
+GSE19027_CSvsNS_GEO2R_limma_volcano <- ggplot(DEGs, aes(x = logFC, y = -log10(adj.P.Val))) +
+  geom_point(aes(color = ifelse(adj.P.Val < 0.05, "red", "black")), alpha = 0.6, show.legend = FALSE) +
+  stat_dens2d_labels(data = DEGs_significant, 
+                     aes(label = Gene.symbol), geom = "text_repel", 
+                     size = 2, 
+                     position = position_nudge_centre(x = 0.1, 
+                                                      y = 0.1, 
+                                                      direction = "radial"),
+                     min.segment.length = 0,
+                     fontface = "bold") +
+  scale_color_manual(values = c("black", "red")) +
+  theme_minimal() +
+  labs(title = "DEGs in GSE19027 Current vs. Never Smokers",
+       x = "log2FC",
+       y = "-log10(FDR)",
+       caption = paste0("significant DEGs: n = ", nrow(DEGs_significant)))
+GSE19027_CSvsNS_GEO2R_limma_volcano
+```
+
+# GSE20257
+
+## Load libraries and samples from GEO
+
+```{r}
+# Version info: R 4.2.2, Biobase 2.58.0, GEOquery 2.66.0, limma 3.54.0
+################################################################
+#   Differential expression analysis with limma
+library(GEOquery)
+library(limma)
+library(dplyr)
+
+# load series and platform data from GEO
+
+gset <- getGEO("GSE20257", GSEMatrix =TRUE, AnnotGPL=TRUE)
+if (length(gset) > 1) idx <- grep("GPL570", attr(gset, "names")) else idx <- 1
+gset <- gset[[idx]]
+
+# make proper column names to match toptable 
+fvarLabels(gset) <- make.names(fvarLabels(gset))
+
+# group membership for all samples
+gsms <- paste0("XXXXXXXXXXXXXXXXX1100000000XXXXXXXXXXX111111110000",
+               "11111XXXXXXX00000000000111111111111111111000100100",
+               "11XXXX1100011000011111111111X000001")
+sml <- strsplit(gsms, split="")[[1]]
+
+# filter out excluded samples (marked as "X")
+sel <- which(sml != "X")
+sml <- sml[sel]
+gset <- gset[ ,sel]
+
+gset <- gset[complete.cases(exprs(gset)), ] # skip missing values
+
+```
+
+## Checks and appropriate steps for log2 and quantile normalization
+
+```{r}
+
+## Make histograms and boxplots to check if the data is log-transformed and needs quantile normalization ##
+hist(as.matrix(exprs(gset))) # It's squished to the left, so needs log2 transform
+boxplot(exprs(gset)) # It's scary and chaotic
+max(exprs(gset)) # 130257
+min(exprs(gset)) # 0.0964001
+
+## log2 and quantile normalization
+exprs(gset) <- log2(exprs(gset)+1) # I think even without zero values it is better to do +1 so that we don't get large negative values(?)
+exprs(gset) <- normalizeBetweenArrays(exprs(gset)) # quantile normalization
+
+hist(as.matrix(exprs(gset))) # much better
+boxplot(exprs(gset)) # Look identical
+max(exprs(gset)) # 16.16458
+min(exprs(gset)) # 0.4225966
+
+```
+
+## Set up design matrix
+```{r}
+
+# assign samples to groups and set up design matrix
+gs <- factor(sml)
+groups <- make.names(c("non-smoker","smoker"))
+levels(gs) <- groups
+gset$group <- gs
+
+# Finish setting up the design matrix.
+design <- model.matrix(~group + 0, gset)
+colnames(design) <- levels(gs)
+
+```
+
+## PCA plots, ComBat correction for batch, saving expression data
+```{r}
+## Plot PCA ##
+colz <- as.numeric(as.factor(gs)) # Get color values from group
+PCA_1 <- plotMDS(exprs(gset),
+        gene.selection = "common",
+        main = "PCA for CS vs NS GSE20257",
+        col = colz,
+        #labels = gs
+        #pch = 1
+        )
+
+## We seem to have very clear separation between two clusters but not based on smoking status. 
+# This suggests some other confounding factor or batch effect.
+# I could investigate the phenotypic data to try to figure out what it is, but for now I think I will just remove it with ComBat.
+# The separation seems to be pretty much at zero on the PC1 axis with the exception of 3 samples, which I can manually re-assign.
+
+# Assign batch labels based on the first dimension from MDS (equivalent to PC1)
+unknown_batch_labels <- ifelse(PCA_1$x < 0, 1, 2)
+
+# Get positions of the 3 samples that need to be reassigned
+which(colnames(exprs(gset))=="GSM298232") #41
+which(colnames(exprs(gset))=="GSM298240") #49
+which(colnames(exprs(gset))=="GSM434050") #76
+
+# Manually reassign these 3 to the correct batch groups
+unknown_batch_labels[41] <-1
+unknown_batch_labels[49] <-1
+unknown_batch_labels[76] # Seems this is already 2, which it should be
+
+# ComBat to remove batch effect
+library(sva)
+exprs_matrix_combat <- ComBat(dat=exprs(gset), batch=unknown_batch_labels, mod=NULL, par.prior=TRUE, prior.plots=FALSE)
+
+# PCA of batch-corrected samples
+PCA_2 <- plotMDS(exprs_matrix_combat,
+        gene.selection = "common",
+        main = "PCA for CS vs NS GSE20257: batch corrected",
+        col = colz,
+        #labels = gs
+        pch = 1
+        )
+# Nice, now PC2 appears to be grouped based approximately on smoking status and PC1 does not appear to be in batches.
+
+# Saving expression data for GSE20257
+# GSE20257_expr_matrix <- exprs(gset)  # Extract the expression matrix
+# GSE20257_sstat_data <- gset$group   # Extract the smoking status labels
+# #Gene_Symbol <- gset@featureData@data[["Gene.symbol"]] # Get the gene symbols to replace probeset IDs with
+# # Save the data
+# write.table(GSE20257_expr_matrix, "../../../Former_Smokers_Aim_1/2_Output/GEO2R_limma_analysis/GSE20257/GSE20257_expr_matrix.txt")
+# write.table(GSE20257_sstat_data, "../../../Former_Smokers_Aim_1/2_Output/GEO2R_limma_analysis/GSE20257/GSE20257_sstat_data.txt")
+
+```
+
+## Vooma, fit, DEGs calculation, and filtering
+```{r}
+## Crucial bit: Replace the expression values in gset with the batch corrected ones ##
+exprs(gset) <- as.matrix(exprs_matrix_combat)
+
+# calculate precision weights and show plot of mean-variance trend
+v <- vooma(gset, design, plot=T)
+# OR weights by group
+# v <- voomaByGroup(gset, group=groups, design, plot=T, cex=0.1, pch=".", col=1:nlevels(gs))
+v$genes <- fData(gset) # attach gene annotations
+
+# fit linear model
+fit  <- lmFit(v)
+
+# set up contrasts of interest and recalculate model coefficients
+cts <- paste(groups[2], groups[1], sep="-")
+cont.matrix <- makeContrasts(contrasts=cts, levels=design)
+fit2 <- contrasts.fit(fit, cont.matrix)
+
+# compute statistics and table of top significant genes
+fit2 <- eBayes(fit2, 0.01)
+tT <- topTable(fit2, adjust="fdr", sort.by="B", number=Inf)
+
+tT <- subset(tT, select=c("ID", "Gene.symbol", "logFC", "adj.P.Val"))
+
+
+# Filter unlabelled genes, duplicate genes, and adj.P.Val < 0.05
+GSE20257_GEO2R_limma_all <- tT %>%
+  filter(Gene.symbol!= "") %>% # Remove blank gene symbols
+  group_by(Gene.symbol) %>%
+  slice_min(adj.P.Val, with_ties = TRUE) %>% 
+  # For probesets mapping to same gene, keep one with lowest FDR. Keep ties for now to check later.
+  ungroup()
+
+GSE20257_GEO2R_limma_sig <- GSE20257_GEO2R_limma_all %>%
+  filter(adj.P.Val <= 0.05) # Remove FDR > 0.05 genes
+
+# Checking for ties
+ties <- GSE20257_GEO2R_limma_sig %>%
+  group_by(Gene.symbol) %>%
+  filter(n() > 1) %>%
+  ungroup()
+print(ties) 
+# 2 ties: AKR1C1 and NPAS3.
+# Both of the probesets for AKR1C1 have the x suffix. I will arbitrarily keep the slightly larger one.
+# Same suffixes for NPAS3 probesets. I will arbitrarily keep the slightly higher magnitude one.
+
+# Removing the tied probesets
+GSE20257_GEO2R_limma_sig <- GSE20257_GEO2R_limma_sig %>%
+  filter(ID != c('204151_x_at', '230412_at'))
+
+head(GSE20257_GEO2R_limma_sig)
+nrow(GSE20257_GEO2R_limma_sig)
+
+# Save output
+#write.table(GSE20257_GEO2R_limma_sig, "/Users/liambrockley/Desktop/Former_Smokers_Project/Former_Smokers_Aim_1/2_Output/GEO2R_limma_analysis/GSE20257/GSE20257_GEO2R_limma_sig.txt", sep = '\t', col.names = TRUE, row.names = FALSE)
+```
+
+## QC checks: P-value distribution, Q-Q plot, Expression value distribution
+
+```{r}
+
+## Checking histogram of P-value distribution
+hist(GSE20257_GEO2R_limma_all$adj.P.Val, col = "grey", border = "white", xlab = "P-adj",
+     ylab = "Number of genes", main = "P-adj value distribution")
+# Skewed towards significant genes. Might be an issue there. To look into.
+
+# summarize test results as "up", "down" or "not expressed"
+dT <- decideTests(fit2, adjust.method="fdr", p.value=0.05, lfc=0)
+
+# create Q-Q plot for t-statistic
+t.good <- which(!is.na(fit2$F)) # filter out bad probes
+qqt(fit2$t[t.good], fit2$df.total[t.good], main="Moderated t statistic")
+
+################################################################
+# General expression data analysis
+ex <- exprs(gset)
+
+# expression value distribution
+par(mar=c(4,4,2,1))
+title <- paste ("GSE20257", "/", annotation(gset), " value distribution", sep ="")
+plotDensities(ex, group=gs, main=title, legend ="topright")
+
+```
+
+## Volcano plot
+```{r}
+
+## Volcano plot ##
+
+library(ggplot2)
+library(ggrepel)
+library(ggpmisc)
+
+# Renaming generically for convenience
+DEGs <- GSE20257_GEO2R_limma_all
+DEGs_significant <- GSE20257_GEO2R_limma_sig
+
+GSE20257_CSvsNS_GEO2R_limma_volcano <- ggplot(DEGs, aes(x = logFC, y = -log10(adj.P.Val))) +
+  geom_point(aes(color = ifelse(adj.P.Val < 0.05, "red", "black")), alpha = 0.6, show.legend = FALSE) +
+  stat_dens2d_labels(data = DEGs_significant, 
+                     aes(label = Gene.symbol), geom = "text_repel", 
+                     size = 2, 
+                     position = position_nudge_centre(x = 0.1, 
+                                                      y = 0.1, 
+                                                      direction = "radial"),
+                     min.segment.length = 0,
+                     fontface = "bold") +
+  scale_color_manual(values = c("black", "red")) +
+  theme_minimal() +
+  labs(title = "DEGs in GSE20257 Current vs. Never Smokers",
+       x = "log2FC",
+       y = "-log10(FDR)",
+       caption = paste0("significant DEGs: n = ", nrow(DEGs_significant)))
+GSE20257_CSvsNS_GEO2R_limma_volcano
+```
+
+# GSE63127
+
+## Load samples from GEO
+
+```{r}
+# Version info: R 4.2.2, Biobase 2.58.0, GEOquery 2.66.0, limma 3.54.0
+################################################################
+#   Differential expression analysis with limma
+library(GEOquery)
+library(limma)
+library(umap)
+library(dplyr)
+
+# load series and platform data from GEO
+gset <- getGEO("GSE63127", GSEMatrix =TRUE, AnnotGPL=TRUE)
+if (length(gset) > 1) idx <- grep("GPL570", attr(gset, "names")) else idx <- 1
+gset <- gset[[idx]]
+
+# make proper column names to match toptable 
+fvarLabels(gset) <- make.names(fvarLabels(gset))
+
+# group membership for all samples
+gsms <- paste0("X00100011111X00000000000X00000X000000000000X000X00",
+               "XX00X0XXXXXXXXX1111111111111111111111X111X11111111",
+               "XXXX1XXXXXXXXXXXXXXXXXXXXXXXX001000000010100111111",
+               "01110111110011111001110011101011111001110101100011",
+               "111111111111111111111111111111")
+sml <- strsplit(gsms, split="")[[1]]
+
+# filter out excluded samples (marked as "X")
+sel <- which(sml != "X")
+sml <- sml[sel]
+gset <- gset[ ,sel]
+
+gset <- gset[complete.cases(exprs(gset)), ] # skip missing values
+length(sml) # 182 samples
+
+```
+
+## Normalization and checks
+
+```{r}
+
+## Make histograms and boxplots to check if the data is log-transformed and needs quantile normalization ##
+hist(as.matrix(exprs(gset))) # skewed left, needs log2 transform
+boxplot(exprs(gset)) # scary-looking
+max(exprs(gset)) # 136808
+min(exprs(gset)) # 0.0657913
+# Should do both log2 and quantile normalization
+
+## log2 and Quantile normalization ##
+exprs(gset) <- log2(exprs(gset)+1)
+exprs(gset) <- normalizeBetweenArrays(exprs(gset)) # quantile normalization
+
+hist(as.matrix(exprs(gset))) # much better
+boxplot(exprs(gset)) # All identical
+min(exprs(gset)) # 0.3185814
+max(exprs(gset)) # 16.17398
+
+```
+
+## Start design matrix, plot first PCA
+```{r}
+# assign samples to groups and set up design matrix
+gs <- factor(sml)
+groups <- make.names(c("non-smoker","smoker"))
+levels(gs) <- groups
+gset$group <- gs
+
+
+## Plot PCA ##
+colz <- as.numeric(as.factor(gs)) # Get color values from group
+plotMDS(exprs(gset),
+        gene.selection = "common",
+        main = "PCA for CS vs NS GSE63127",
+        col = colz,
+        labels = gs
+)
+        
+## We have 4 definite clusters that are not based on smoking status. 
+# To look into: batch effect or other phenotypic confounders
+
+```
+
+## Correction for batch effect
+
+### Setup: cleaning up the table of phenotypic information
+```{r}
+
+### I want to check for sources of batch effect or bias that can explain:
+## Irregular clustering for PCA and U-map
+## Unusually high number of DEGs
+## FDRs very skewed towards low & significant values
+## It seems that one way to do this is to plot a heatmap, 
+## with all the pData listed, and look for clusters that naturally form.
+
+phenotypic_data <- pData(gset)  # Extract phenotypic data
+
+# The phenotypic data is terrible.
+# This is filtered down to the samples that were included.
+# I will first try to clean up the phenotypic data.
+head(phenotypic_data)
+
+# So I think the features I want to keep will be:
+# Dates of submission/updates etc, sex, ethnicity, smoking status
+# Keep the columns that might contain data of interest, which will need to be cleaned up.
+
+# List of column names I want to keep and clean up into usable labels
+columns_to_find <- c("geo_accession","status","submission_date","last_update_date","characteristics_ch1","characteristics_ch1.1","characteristics_ch1.2","characteristics_ch1.3","age:ch1","cilia length:ch1","ethnic group:ch1","ethnicity:ch1","serum 25-oh-d:ch1","sex:ch1","smoking status:ch1","group")
+
+# Get the column indexes
+indexes <- sapply(columns_to_find, function(col_name) which(names(phenotypic_data) == col_name))
+indexes <- unlist(indexes)
+
+phenotypic_data_v1 <- phenotypic_data[,c(indexes)]
+
+# Now I need to parse out sex, ethnicity, smoking status, and age, vitamin D, pack years.
+
+#Rename "group" as "smoking status"
+names(phenotypic_data_v1)[16] <- "smoking_status"
+
+## Grabbing ethnicity values from the columns ##
+# Initialize a new column "ethnicity" with NA values
+phenotypic_data_v1$ethnicity <- NA
+
+# Function to find 'eth' in a row and return the corresponding value
+find_ethnicity <- function(row) {
+  eth_column <- which(grepl('eth', row))
+  if (length(eth_column) > 0) {
+    return(row[eth_column])
+  } else {
+    return(NA)
+  }
+}
+# Apply the function row-wise to populate the "ethnicity" column
+phenotypic_data_v1$ethnicity <- apply(phenotypic_data_v1, 1, find_ethnicity)
+
+
+
+## Grabbing sex values from the columns ##
+# Initialize a new column "sex" with NA values
+phenotypic_data_v1$sex <- NA
+
+# Function to find 'sex' in a row and return the corresponding value
+find_sex <- function(row) {
+  sex_column <- which(grepl('sex', row))
+  if (length(sex_column) > 0) {
+    return(row[sex_column])
+  } else {
+    return(NA)
+  }
+}
+# Apply the function row-wise to populate the "sex" column
+phenotypic_data_v1$sex <- apply(phenotypic_data_v1, 1, find_sex)
+
+
+## Grabbing pack_years values from the columns ##
+# Initialize a new column "pack_years" with NA values
+phenotypic_data_v1$pack_years <- NA
+
+# Function to find 'pack_years' in a row and return the corresponding value, but just the first instance
+find_pack_years <- function(row) {
+  pack_years_column <- which(grepl('pack', row))
+  if (length(pack_years_column) > 0) {
+    return(row[pack_years_column[1]])
+  } else {
+    return(NA)
+  }
+}
+# Apply the function row-wise to populate the "pack_years" column
+phenotypic_data_v1$pack_years <- apply(phenotypic_data_v1, 1, find_pack_years)
+#unlist the column
+phenotypic_data_v1$pack_years <- unlist(phenotypic_data_v1$pack_years )
+
+
+
+## Grabbing age values from the columns ##
+# Initialize a new column "age" with NA values
+phenotypic_data_v1$age <- NA
+
+# Function to find 'age' in a row and return the corresponding value
+find_age <- function(row) {
+  age_column <- which(grepl('age', row))
+  if (length(age_column) > 0) {
+    return(row[age_column])
+  } else {
+    return(NA)
+  }
+}
+# Apply the function row-wise to populate the "age" column
+phenotypic_data_v1$age <- apply(phenotypic_data_v1, 1, find_age)
+
+
+## Grabbing vitamin_d values from the columns ##
+# Initialize a new column "vitamin_d" with NA values
+phenotypic_data_v1$vitamin_d <- NA
+
+# Function to find 'vitamin_d' in a row and return the corresponding value, first instance
+find_vitamin_d <- function(row) {
+  vitamin_d_column <- which(grepl('vitamin', row))
+  if (length(vitamin_d_column) > 0) {
+    return(row[vitamin_d_column[1]])
+  } else {
+    return(NA)
+  }
+}
+# Apply the function row-wise to populate the "vitamin_d" column
+phenotypic_data_v1$vitamin_d <- apply(phenotypic_data_v1, 1, find_vitamin_d)
+
+## Grabbing vitamin_d values from the columns ##
+# Initialize a new column "vitamin_d" with NA values
+phenotypic_data_v1$vitamin_d <- NA
+
+# Function to find 'vitamin_d' in a row and return the corresponding value, first instance
+find_vitamin_d <- function(row) {
+  vitamin_d_column <- which(grepl('vitamin', row))
+  if (length(vitamin_d_column) > 0) {
+    return(row[vitamin_d_column[1]])
+  } else {
+    return(NA)
+  }
+}
+# Apply the function row-wise to populate the "vitamin_d" column
+phenotypic_data_v1$vitamin_d <- apply(phenotypic_data_v1, 1, find_vitamin_d)
+
+## Grabbing cilia values from the columns ##
+# Initialize a new column "cilia_length" with NA values
+phenotypic_data_v1$cilia_length <- NA
+
+# Function to find 'cilia' in a row and return the corresponding value, first instance
+find_cilia <- function(row) {
+  cilia_column <- which(grepl('cilia', row))
+  if (length(cilia_column) > 0) {
+    return(row[cilia_column[1]])
+  } else {
+    return(NA)
+  }
+}
+# Apply the function row-wise to populate the "cilia" column
+phenotypic_data_v1$cilia_length <- apply(phenotypic_data_v1, 1, find_cilia)
+
+
+
+## Now cut out the messy columns
+phenotypic_data_v1 <- phenotypic_data_v1[,-c(5:15)]
+
+## Remove unnecessary prefix info
+phenotypic_data_v1$ethnicity <- gsub(".*: ", "", phenotypic_data_v1$ethnicity )
+phenotypic_data_v1$age <- gsub(".*: ", "", phenotypic_data_v1$age)
+phenotypic_data_v1$sex <- gsub(".*: ", "", phenotypic_data_v1$sex)
+phenotypic_data_v1$vitamin_d <- gsub(".*: ", "", phenotypic_data_v1$vitamin_d)
+phenotypic_data_v1$cilia_length <- gsub(".*: ", "", phenotypic_data_v1$cilia_length)
+
+phenotypic_data_v1$pack_years<- gsub(".*, ", "", phenotypic_data_v1$pack_years)
+phenotypic_data_v1$pack_years<- gsub("pack-years", "", phenotypic_data_v1$pack_years)
+
+
+# Reformat the submission dates to be sortable
+
+phenotypic_data_v1 <- phenotypic_data_v1 %>%
+  mutate(submission_date = ifelse(submission_date == "Dec 20 2012", "2012-12-20", submission_date)) %>%
+  mutate(submission_date = ifelse(submission_date == "Jan 03 2008", "2008-01-08", submission_date)) %>%
+  mutate(submission_date = ifelse(submission_date == "Jan 31 2013", "2013-01-31", submission_date)) %>%
+  mutate(submission_date = ifelse(submission_date == "Jun 03 2010", "2010-06-03", submission_date)) %>%
+  mutate(submission_date = ifelse(submission_date == "Jun 13 2008", "2008-06-13", submission_date)) %>%
+  mutate(submission_date = ifelse(submission_date == "May 17 2007", "2007-05-17", submission_date)) %>%
+  mutate(submission_date = ifelse(submission_date == "Nov 08 2013", "2013-11-08", submission_date)) %>%
+  mutate(submission_date = ifelse(submission_date == "Nov 10 2014", "2014-11-10", submission_date))
+
+# This is now usable for a heatmap or checking for batch effect, though very incomplete.
+#write.table(phenotypic_data_v1, "/Users/liambrockley/Desktop/Former_Smokers_Project/Former_Smokers_Aim_1/2_Output/GEO2R_limma_analysis/GSE63127/GSE63127_phenotypic_data_v1.txt", sep = '\t', col.names = TRUE, row.names = FALSE)
+
+
+
+```
+
+## Plotting PCA again with the submission date information
+```{r}
+
+colz <- as.numeric(as.factor(gs)) # Get color values from smoking status group
+pointz <- as.numeric(as.factor(phenotypic_data_v1$submission_date<= "2010-06-03")) # Get point shape values from date of submission: split into 2010 and earlier, post-2010]
+
+pointz2 <- as.numeric(as.factor(phenotypic_data_v1$submission_date)) # Get point shape values from date of submission, this time not splitting in 2, having a different shape for all
+
+## Plot PCA ##
+plotMDS(exprs(gset),
+        gene.selection = "common",
+        main = "PCA for CS vs NS GSE63127",
+        col = colz, # Colors smokers red and nonsmokers black
+        pch = pointz
+        #labels = gset$group
+)
+
+# Clearly the source of batch effect in PC1 is submission date.
+
+```
+## First batch effect correction (submission date)
+```{r}
+library(sva)
+library(limma)
+
+# Making a batch vector
+submission_post_2010_batch <- ifelse(phenotypic_data_v1$submission_date < as.Date("2012-01-01"), 1, 2)
+
+# Adjust the expression matrix for batch effects
+exprs_matrix_combat <- ComBat(dat=exprs(gset), batch=submission_post_2010_batch, mod=NULL, par.prior=TRUE, prior.plots=FALSE)
+
+
+## Plot PCA for corrected version ##
+date_corrected_PCA <- plotMDS(exprs_matrix_combat,
+        gene.selection = "common",
+        main = "PCA for CS vs NS GSE63127, corrected for submission date",
+        col = colz, # Colors smokers red and nonsmokers black
+        pch = pointz
+        #labels = gset$group
+)
+
+```
+
+I tried to investigate the source of the second batch effect, but did not get a definite answer -- it does not help matters that the phenotypic information is very incomplete. I did see that the 11 samples with sex information are divided along these lines, but this is not enought to draw a firm conclusion. See below the PCA for sex:
+
+## PCA for sex in first batch-corrected version
+```{r}
+plotMDS(exprs_matrix_combat,
+        gene.selection = "common",
+        main = "PCA for CS vs NS GSE63127, corrected for submission date",
+        col = colz, # Colors smokers red and nonsmokers black
+        #pch = pointz2 # Using separate shapes for all submission dates
+        labels = phenotypic_data_v1$sex
+)
+
+## Samples are divided by sex, but 11/182 samples is not enough to draw a conclusion here.
+```
+
+As such, I corrected for the second batch effect without knowing what causes the second batch effect.
+
+## Second batch effect correction (unknown batch effect)
+```{r}
+# Assign batch labels based on the first dimension from MDS (equivalent to PC1)
+unknown_batch_labels <- ifelse(date_corrected_PCA$x < 0, 1, 2)
+
+# Do a second batch correction
+exprs_matrix_combat_2 <- ComBat(dat=exprs_matrix_combat, batch=unknown_batch_labels, mod=NULL, par.prior=TRUE, prior.plots=FALSE)
+
+# View PCA plot
+plotMDS(exprs_matrix_combat_2,
+        gene.selection = "common",
+        main = "PCA for CS vs NS GSE63127, corrected for submission date and second batch (possibly sex)",
+        col = colz, # Colors smokers red and nonsmokers black
+        pch = pointz
+        #labels = gset$group
+)
+
+## Now samples seem roughly divided along PC1 for smoking status
+```
+
+## Saving the expression data
+```{r}
+#Saving expression data for GSE63127
+GSE63127_expr_matrix <- as.data.frame(exprs(gset))  # Extract the expression matrix
+GSE63127_sstat_data <- gset$group   # Extract the smoking status labels
+Gene_Symbol <- gset@featureData@data[["Gene.symbol"]] # Get the gene symbols to replace probeset IDs with
+GSE63127_expr_matrix <- cbind(Gene_Symbol, GSE63127_expr_matrix) # Add a gene symbol column to the expression matrix
+
+# Save the data
+write.table(GSE63127_expr_matrix, "../../../Former_Smokers_Aim_1/2_Output/GEO2R_limma_analysis/GSE63127/GSE63127_expr_matrix.txt")
+write.table(GSE63127_sstat_data, "../../../Former_Smokers_Aim_1/2_Output/GEO2R_limma_analysis/GSE63127/GSE63127_sstat_data.txt")
+```
+
+
+
+## vooma, lmfit, and DEGs calculation
+```{r}
+
+# Finish setting up the design matrix
+design <- model.matrix(~group + 0, gset)
+colnames(design) <- levels(gs)
+
+
+## Crucial bit: Replace the expression values in gset with the batch corrected ones ##
+exprs(gset) <- as.matrix(exprs_matrix_combat_2)
+
+# calculate precision weights and show plot of mean-variance trend
+v <- vooma(gset, design, plot=T)
+# OR weights by group
+# v <- voomaByGroup(gset, group=groups, design, plot=T, cex=0.1, pch=".", col=1:nlevels(gs))
+v$genes <- fData(gset) # attach gene annotations
+
+# fit linear model
+fit  <- lmFit(v)
+
+# set up contrasts of interest and recalculate model coefficients
+cts <- paste(groups[2], groups[1], sep="-")
+cont.matrix <- makeContrasts(contrasts=cts, levels=design)
+fit2 <- contrasts.fit(fit, cont.matrix)
+
+# compute statistics and table of top significant genes
+fit2 <- eBayes(fit2, 0.01)
+tT <- topTable(fit2, adjust="fdr", sort.by="B", number=Inf)
+
+tT <- subset(tT, select=c("ID","Gene.symbol","logFC","adj.P.Val"))
+
+
+# Filter unlabelled genes, duplicate genes
+GSE63127_CSvsNS_GEO2R_limma_all <- tT %>%
+  filter(Gene.symbol!= "") %>% # Remove blank gene symbols
+  group_by(Gene.symbol) %>%
+  slice_min(adj.P.Val, with_ties = TRUE) %>% 
+  # For probesets mapping to same gene, keep one with lowest FDR. Keep ties for now to check later.
+  ungroup()
+
+# Filter for FDR < 0.05
+GSE63127_CSvsNS_GEO2R_limma_sig <- GSE63127_CSvsNS_GEO2R_limma_all %>%
+  filter(adj.P.Val <= 0.05) # Remove FDR > 0.05 genes
+
+# Checking for ties
+ties <- GSE63127_CSvsNS_GEO2R_limma_sig %>%
+  group_by(Gene.symbol) %>%
+  filter(n() > 1) %>%
+  ungroup()
+print(ties)
+# No ties
+
+head(GSE63127_CSvsNS_GEO2R_limma_sig)
+nrow(GSE63127_CSvsNS_GEO2R_limma_sig)
+
+# Save the output (used absolute path for convenience)
+#write.table(GSE63127_CSvsNS_GEO2R_limma_sig, "/Users/liambrockley/Desktop/Former_Smokers_Project/Former_Smokers_Aim_1/2_Output/GEO2R_limma_analysis/GSE63127/GSE63127_CSvsNS_GEO2R_limma_sig.txt", sep = '\t', col.names = TRUE, row.names = FALSE)
+
+
+```
+
+## P-value distribution and Q-Q plot
+```{r}
+
+# Visualize and quality control test results.
+# Build histogram of P-values for all genes. Normal test
+# assumption is that most genes are not differentially expressed.
+
+hist(GSE63127_CSvsNS_GEO2R_limma_all$adj.P.Val, col = "grey", border = "white", xlab = "P-adj",
+     ylab = "Number of genes", main = "P-adj value distribution")
+## This looks very skewed towards significant genes. An issue. Look into this.
+## Now checking pre-processed distribution
+tT2 <- topTable(fit2, adjust="fdr", sort.by="B", number=Inf)
+hist(tT2$adj.P.Val, col = "grey", border = "white", xlab = "P-adj",
+     ylab = "Number of genes", main = "P-adj value distribution")
+# Same issue
+
+# summarize test results as "up", "down" or "not expressed"
+dT <- decideTests(fit2, adjust.method="fdr", p.value=0.05, lfc=0)
+
+# create Q-Q plot for t-statistic
+t.good <- which(!is.na(fit2$F)) # filter out bad probes
+qqt(fit2$t[t.good], fit2$df.total[t.good], main="Moderated t statistic")
+```
+
+## Expression data analysis for checking, and UMAP as well (since large sample size)
+```{r}
+# General expression data analysis
+ex <- exprs(gset)
+
+
+# # box-and-whisker plot
+# ord <- order(gs)  # order samples by group
+# palette(c("#1B9E77", "#7570B3"))
+# par(mar=c(7,4,2,1))
+# title <- paste ("GSE63127", "/", annotation(gset), sep ="")
+# boxplot(ex[,ord], boxwex=0.6, notch=T, main=title, outline=FALSE, las=2, col=gs[ord])
+# legend("topleft", groups, fill=palette(), bty="n")
+
+# expression value distribution
+par(mar=c(4,4,2,1))
+title <- paste ("GSE63127", "/", annotation(gset), " value distribution", sep ="")
+plotDensities(ex, group=gs, main=title, legend ="topright")
+
+# UMAP plot (dimensionality reduction)
+## Since there are >100 samples (182 samples) included, I think it is valid to check UMAP
+ex <- na.omit(ex) # eliminate rows with NAs
+ex <- ex[!duplicated(ex), ]  # remove duplicates
+ump <- umap(t(ex), n_neighbors = 15, random_state = 123)
+par(mar=c(3,3,2,6), xpd=TRUE)
+plot(ump$layout, main="UMAP plot, nbrs=15", xlab="", ylab="", col=gs, pch=20, cex=1.5)
+legend("topright", inset=c(-0.15,0), legend=levels(gs), pch=20,
+       col=1:nlevels(gs), title="Group", pt.cex=1.5)
+#library("maptools")  # point labels without overlaps
+#pointLabel(ump$layout, labels = rownames(ump$layout), method="SANN", cex=0.6)
+
+## 2 clusters that are somewhat mixed. Could still indicate some kind of confounding/batch.
+```
+
+## Volcano plots
+```{r}
+## Volcano plot##
+library(ggplot2)
+library(ggrepel)
+library(ggpmisc)
+
+# Renaming generically for convenience
+DEGs <- GSE63127_CSvsNS_GEO2R_limma_all
+DEGs_significant <- GSE63127_CSvsNS_GEO2R_limma_sig
+
+GSE63127_CSvsNS_GEO2R_limma_volcano <- ggplot(DEGs, aes(x = logFC, y = -log10(adj.P.Val))) +
+  geom_point(aes(color = ifelse(adj.P.Val < 0.05, "red", "black")), alpha = 0.6, show.legend = FALSE) +
+  stat_dens2d_labels(data = DEGs_significant, 
+                     aes(label = Gene.symbol), geom = "text_repel", 
+                     size = 2, 
+                     position = position_nudge_centre(x = 0.1, 
+                                                      y = 0.1, 
+                                                      direction = "radial"),
+                     min.segment.length = 0,
+                     fontface = "bold") +
+  scale_color_manual(values = c("black", "red")) +
+  theme_minimal() +
+  labs(title = "DEGs in GSE63127 Current vs. Never Smokers",
+       x = "log2FC",
+       y = "-log10(FDR)",
+       caption = paste0("significant DEGs: n = ", nrow(DEGs_significant)))
+GSE63127_CSvsNS_GEO2R_limma_volcano
+```
+
+# Making a combined table to rank genes of interest and compare studies
+
+## Read in tables
+### Note: I should redo this without reading in all the tables, should just use the internal tables. It has the same effect but it's just more satisfyingly self-contained that way
+```{r}
+## Read in the tables
+GSE4302_CS_NS_GEO2R_limma_sig <- read.table("/Users/liambrockley/Desktop/Former_Smokers_Project/Former_Smokers_Aim_1/2_Output/GEO2R_limma_analysis/GSE4302/GSE4302_CS_NS_GEO2R_limma_sig.txt")
+# For some reason column names are giving me grief, so I have to set them
+colnames(GSE4302_CS_NS_GEO2R_limma_sig) <- GSE4302_CS_NS_GEO2R_limma_sig[1,]
+GSE4302_CS_NS_GEO2R_limma_sig <- GSE4302_CS_NS_GEO2R_limma_sig[-1,]
+
+GSE7895_CS_NS_GEO2R_limma_sig <- read.table("/Users/liambrockley/Desktop/Former_Smokers_Project/Former_Smokers_Aim_1/2_Output/GEO2R_limma_analysis/GSE7895/GSE7895_CS_NS_GEO2R_limma_sig.txt")
+# For some reason column names are giving me grief, so I have to set them
+colnames(GSE7895_CS_NS_GEO2R_limma_sig) <- GSE7895_CS_NS_GEO2R_limma_sig[1,]
+GSE7895_CS_NS_GEO2R_limma_sig <- GSE7895_CS_NS_GEO2R_limma_sig[-1,]
+
+GSE14633_CS_NS_GEO2R_limma_sig <- read.table("/Users/liambrockley/Desktop/Former_Smokers_Project/Former_Smokers_Aim_1/2_Output/GEO2R_limma_analysis/GSE14633/GSE14633_CS_NS_GEO2R_limma_sig.txt")
+# For some reason column names are giving me grief, so I have to set them
+colnames(GSE14633_CS_NS_GEO2R_limma_sig) <- GSE14633_CS_NS_GEO2R_limma_sig[1,]
+GSE14633_CS_NS_GEO2R_limma_sig <- GSE14633_CS_NS_GEO2R_limma_sig[-1,]
+
+GSE19027_CS_NS_GEO2R_limma_sig <- read.table("/Users/liambrockley/Desktop/Former_Smokers_Project/Former_Smokers_Aim_1/2_Output/GEO2R_limma_analysis/GSE19027/GSE19027_CS_NS_GEO2R_limma_sig.txt")
+# For some reason column names are giving me grief, so I have to set them
+colnames(GSE19027_CS_NS_GEO2R_limma_sig) <- GSE19027_CS_NS_GEO2R_limma_sig[1,]
+GSE19027_CS_NS_GEO2R_limma_sig <- GSE19027_CS_NS_GEO2R_limma_sig[-1,]
+
+GSE20257_CS_NS_GEO2R_limma_sig <- read.table("/Users/liambrockley/Desktop/Former_Smokers_Project/Former_Smokers_Aim_1/2_Output/GEO2R_limma_analysis/GSE20257/GSE20257_CS_NS_GEO2R_limma_sig.txt")
+# For some reason column names are giving me grief, so I have to set them
+colnames(GSE20257_CS_NS_GEO2R_limma_sig) <- GSE20257_CS_NS_GEO2R_limma_sig[1,]
+GSE20257_CS_NS_GEO2R_limma_sig <- GSE20257_CS_NS_GEO2R_limma_sig[-1,]
+
+GSE63127_CS_NS_GEO2R_limma_sig <- read.table("/Users/liambrockley/Desktop/Former_Smokers_Project/Former_Smokers_Aim_1/2_Output/GEO2R_limma_analysis/GSE63127/GSE63127_CSvsNS_GEO2R_limma_sig.txt")
+# For some reason column names are giving me grief, so I have to set them
+colnames(GSE63127_CS_NS_GEO2R_limma_sig) <- GSE63127_CS_NS_GEO2R_limma_sig[1,]
+GSE63127_CS_NS_GEO2R_limma_sig <- GSE63127_CS_NS_GEO2R_limma_sig[-1,]
+
+```
+
+## Make the combined table
+```{r}
+# Combine DEG_sig lists together, with study ID identifier column
+library(dplyr)
+CS_NS_gene_rank_input <- as.data.frame(rbind(cbind("GSE19027", GSE19027_CS_NS_GEO2R_limma_sig$Gene.symbol, GSE19027_CS_NS_GEO2R_limma_sig$logFC, GSE19027_CS_NS_GEO2R_limma_sig$adj.P.Val ), cbind("GSE14633", GSE14633_CS_NS_GEO2R_limma_sig$gene_assignment, GSE19027_CS_NS_GEO2R_limma_sig$logFC, GSE19027_CS_NS_GEO2R_limma_sig$adj.P.Val), cbind("GSE20257", GSE20257_CS_NS_GEO2R_limma_sig$Gene.symbol, GSE20257_CS_NS_GEO2R_limma_sig$logFC, GSE20257_CS_NS_GEO2R_limma_sig$adj.P.Val), cbind("GSE4302", GSE4302_CS_NS_GEO2R_limma_sig$Gene.symbol, GSE4302_CS_NS_GEO2R_limma_sig$logFC, GSE4302_CS_NS_GEO2R_limma_sig$adj.P.Val), cbind("GSE63127",GSE63127_CS_NS_GEO2R_limma_sig$Gene.symbol, GSE63127_CS_NS_GEO2R_limma_sig$logFC, GSE63127_CS_NS_GEO2R_limma_sig$adj.P.Val), cbind("GSE7895", GSE7895_CS_NS_GEO2R_limma_sig$Gene.symbol, GSE7895_CS_NS_GEO2R_limma_sig$logFC, GSE7895_CS_NS_GEO2R_limma_sig$adj.P.Val)))
+
+colnames(CS_NS_gene_rank_input) <- c("Study_ID", "Gene.symbol", "log2FC", "adj.P.Val")
+head(CS_NS_gene_rank_input)
+
+```
+
+## Creating the ranked list
+```{r}
+
+# Convert the log2FC and adj.P.Val to numeric values
+CS_NS_gene_rank_input$log2FC <- as.numeric(CS_NS_gene_rank_input$log2FC)
+CS_NS_gene_rank_input$adj.P.Val <- as.numeric(CS_NS_gene_rank_input$adj.P.Val)
+
+# Easier variable name
+df <- CS_NS_gene_rank_input
+
+# Step 1: Group by gene name
+grouped_df <- df %>%
+  group_by(Gene.symbol)
+
+# Step 2: Create a summary table with the required statistics
+summary_table <- grouped_df %>%
+  summarise(
+    num_studies = n_distinct(Study_ID),
+    studies_list = paste(unique(Study_ID), collapse = ", "),
+    avg_log2FC = mean(log2FC, na.rm = TRUE),
+    avg_abs_log2FC = abs(mean(log2FC, na.rm = TRUE)),
+    sd_log2FC = sd(log2FC),
+    avg_adj.P.Val = mean(adj.P.Val, na.rm = TRUE),
+    sd_adj.P.Val = sd(adj.P.Val)
+  )
+
+# Normalize values to a common scale (0 to 1)
+summary_table$normalized_num_studies <- (summary_table$num_studies - min(summary_table$num_studies)) / (max(summary_table$num_studies) - min(summary_table$num_studies))
+summary_table$normalized_avg_abs_log2FC <- (summary_table$avg_abs_log2FC - min(summary_table$avg_abs_log2FC)) / (max(summary_table$avg_abs_log2FC) - min(summary_table$avg_abs_log2FC))
+
+# Assign weights for both factors (modify as needed)
+num_studies_weight <- 0.5
+abs_log2FC_weight <- 0.5
+
+# Calculate the ranking score
+summary_table$ranking_score <- num_studies_weight * summary_table$normalized_num_studies +
+                               abs_log2FC_weight * summary_table$normalized_avg_abs_log2FC
+
+# Rank the genes based on the calculated ranking score
+CS_NS_ranked_genes <- summary_table %>%
+  arrange(desc(ranking_score))
+
+# Add a column with the rank order
+CS_NS_ranked_genes["rank_order"] <- rownames(CS_NS_ranked_genes)
+head(CS_NS_ranked_genes, n = 20)
+
+
+# Save the output
+#write.table(CS_NS_ranked_genes, "/Users/liambrockley/Desktop/Former_Smokers_Project/Former_Smokers_Aim_1/2_Output/GEO2R_limma_analysis/CS_NS_GEO2R_limma_ranked_genes.txt", sep = '\t', row.names = FALSE, col.names = TRUE)
+
+```
+
+
+
+
+
+
+
+
