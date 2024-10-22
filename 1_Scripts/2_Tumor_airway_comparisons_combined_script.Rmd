@@ -70,6 +70,7 @@ hist(as.matrix(exprs(gset))) # much better
 boxplot(exprs(gset)) # All identical
 min(exprs(gset)) # 0.3185814
 max(exprs(gset)) # 16.17398
+
 ```
 
 ## 1.3 Checking and correcting batch effect / sources of variation
@@ -442,7 +443,8 @@ nrow(GSE7895_CS_NS_GEO2R_limma_sig)
 ## 1.6 Save outputs
 ```{r}
 
-write.table(GSE7895_CS_NS_GEO2R_limma_sig, "../2_Outputs/GSE7895_CS_NS_GEO2R_limma_sig.txt", sep = '\t')
+# Change date suffix as appropriate if changes are made
+write.table(GSE7895_CS_NS_GEO2R_limma_sig, "../2_Outputs/GSE7895_CS_NS_GEO2R_limma_sig_20241016.txt", sep = '\t')
 
 ```
 
@@ -637,6 +639,7 @@ fdrThres=0.05
 DGE_LUAD_T_NM_signed_rank_sig <- DGE_LUAD_T_NM_signed_rank[DGE_LUAD_T_NM_signed_rank$FDR<fdrThres,]
 
 nrow(DGE_LUAD_T_NM_signed_rank_sig) # 4757 (2024/10/16)
+# Note: Way lower than it was the first time I ran it?? Oh well, lower is good I guess.
 
 ```
 
@@ -649,6 +652,13 @@ Accessed 2023/08/31
 
 Unlike the tutorial, here I perform a signed-rank test rather than a rank-sum test, as the samples are not independent (they are matched tumor and normal samples).
 
+
+## 2.4 Saving outputs
+```{r}
+# Change date suffix as appropriate if modifications are made
+write.table(DGE_LUAD_T_NM_signed_rank_sig, "../2_Outputs/DGE_LUAD_T_NM_signed_rank_sig_20241016.txt", sep = '\t')
+```
+
 #####
 
 # 3. Differential methylation analysis of TCGA-LUAD tumor vs normal tissue (T-E)
@@ -657,15 +667,16 @@ Unlike the tutorial, here I perform a signed-rank test rather than a rank-sum te
 ```{r}
 library(dplyr)
 
-data_methylation_hm450_tumor <- read.table("../Former_Smokers_Aim_2/1_TCGA_LUAD_multiomics/0_Unpaired_input_tables/data_methylation_hm450.txt", header=TRUE, fill=TRUE)
+data_methylation_hm450_tumor <- read.table("../../Former_Smokers_Aim_2/1_TCGA_LUAD_multiomics/0_Unpaired_input_tables/data_methylation_hm450.txt", header=TRUE, fill=TRUE)
 
-data_methylation_hm450_normal <- read.table("../Former_Smokers_Aim_2/1_TCGA_LUAD_multiomics/0_Unpaired_input_tables/data_methylation_hm450_normals.txt", header=TRUE, fill=TRUE)
+data_methylation_hm450_normal <- read.table("../../Former_Smokers_Aim_2/1_TCGA_LUAD_multiomics/0_Unpaired_input_tables/data_methylation_hm450_normals.txt", header=TRUE, fill=TRUE)
 
 ```
 
 I downloaded this level 3 methylation 450k data from cBioPortal, from TCGA Lung Adenocarcinoma (Firehose Legacy)
 https://www.cbioportal.org/study/summary?id=luad_tcga
 (Accessed 2023/08/29)
+Note that this provides gene information but not probe information
 
 ## 3.2 Formatting dataset 
 
@@ -797,19 +808,27 @@ normal_values=methyl_beta[,normal_indexes]
 foldChanges=log2(rowMeans(tumor_values, na.rm = TRUE)/rowMeans(normal_values, na.rm = TRUE))
 
 #Output results to a unified table!
-DMeth_LUAD_TvsNM_hm450 <-data.frame(log2foldChange=foldChanges, pValues=pvalues, FDR=fdr)
-rownames(DMeth_LUAD_TvsNM_hm450)=rownames(methyl_beta)
-DMeth_LUAD_TvsNM_hm450=na.omit(DMeth_LUAD_TvsNM_hm450)
+DMeth_LUAD_T_NM_hm450 <-data.frame(log2foldChange=foldChanges, pValues=pvalues, FDR=fdr)
+rownames(DMeth_LUAD_T_NM_hm450)=rownames(methyl_beta)
+DMeth_LUAD_T_NM_hm450=na.omit(DMeth_LUAD_T_NM_hm450)
 
 
 # Keep the genes with FDR<0.05
 fdrThres=0.05
-DMeth_LUAD_TvsNM_hm450_sig <- DMeth_LUAD_TvsNM_hm450[DMeth_LUAD_TvsNM_hm450$FDR<fdrThres,]
+DMeth_LUAD_T_NM_hm450_sig <- DMeth_LUAD_T_NM_hm450[DMeth_LUAD_T_NM_hm450$FDR<fdrThres,]
 
-nrow(DMeth_LUAD_TvsNM_hm450_sig) # 9930 (2024/10/16)
+nrow(DMeth_LUAD_T_NM_hm450_sig) # 9930 (2024/10/16)
 
-test
+## I manually checked the genes with duplicate names that I had added a suffix to, and none of them were significant DEGs.
+##ISSUE: This was using gene names and not probe IDs. Could be good to start with a list that includes probe ID.
 ```
+
+## 3.5 Saving outputs
+```{r}
+# Change date suffix as appropriate if modifications are made
+write.table(DMeth_LUAD_T_NM_hm450_sig, "../2_Outputs/DMeth_LUAD_T_NM_hm450_sig_20241016.txt", sep = '\t')
+```
+
 
 #####
 
@@ -820,13 +839,21 @@ test
 
 ### Testing log2FC cutoffs ###
 
-# TCGA-LUAD DEGs
+# A1 DEGs
+log2Thres=0.5
+nrow(GSE63127_CS_NS_GEO2R_limma_sig[abs(GSE63127_CS_NS_GEO2R_limma_sig$logFC)>log2Thres,]) ## 1103 seems ok
+
+# TCGA-LUAD DEGs [[TODO 2024/10/16]]
 log2Thres=2
-nrow(DGE_LUAD_T_NM_signed_rank_sig[abs(DGE_LUAD_T_NM_signed_rank_sig$log2foldChange)>log2Thres,]) # 1734 seems ok 
+nrow(DGE_LUAD_T_NM_signed_rank_sig[abs(DGE_LUAD_T_NM_signed_rank_sig$log2foldChange)>log2Thres,]) 
 
 # TCGA-LUAD DMGs
 log2Thres=0.5
-nrow(DMeth_LUAD_TvsNM_hm450_sig[abs(DMeth_LUAD_TvsNM_hm450_sig$log2foldChange)>log2Thres,]) # 2025 seems reasonable
+nrow(DMeth_LUAD_T_NM_hm450_sig[abs(DMeth_LUAD_T_NM_hm450_sig$log2foldChange)>log2Thres,]) # 2025 seems reasonable
+
+
+
+## Below is unfinished ##
 
 
 # Filtering to the log2FC threshold of 2
@@ -848,9 +875,7 @@ rownames(DGE_LUAD_T_NM_signed_rank_sig_cutoff2) <- gene_info_DEGs$gene_name
 
 ### TCGA-LUAD DMGs ###
 
-# Trying log2FC cutoffs
-log2Thres=0.5
-nrow(DMeth_LUAD_TvsNM_hm450_sig[abs(DMeth_LUAD_TvsNM_hm450_sig$log2foldChange)>log2Thres,]) # 2025 seems reasonable
+
 
 ```
 
