@@ -654,27 +654,43 @@ for (i in 1:length(genes_of_interest)){
         pivot_longer(cols = -Gene, names_to = "Group", values_to = "Expression")
       
       expr_long$Group <- sub("\\..*", "", expr_long$Group) # Remove the sample ID info
+      expr_long$Dataset <- names(df_list_goi[j])
       
       # Store the processed data
       combined_data_curr_gene[[j]] <- expr_long
       
+      # Combine data from all datasets for the current gene
+      combined_data_df <- do.call(rbind, combined_data_curr_gene)
+      
+      # Sometimes I get a random row of zeros, not exactly sure why, will just remove it
+      combined_data_df <- combined_data_df[combined_data_df$Gene!=0,]
+      
     } else{
       print(paste0("Gene ", curr_gene, " not in the dataset ", names(df_list_goi[j])))
     }
-    
-    # Plot using ggplot2
-    boxplot<-ggplot(expr_long, aes(x = Group, y = Expression, fill = Group)) +
+  }
+  
+      # Plot using ggplot2
+    boxplot<-ggplot(combined_data_df, aes(x = Group, y = Expression, fill = Group)) +
       geom_boxplot() +
       #facet_wrap(~ Gene, scales = "free_y") +  # One boxplot per gene
+      facet_wrap(~ Dataset, nrow = 1) + 
       theme_minimal() +
       scale_y_continuous(
-      #limits = c(0,14), 
-      minor_breaks = NULL) + 
-      labs(title = paste0(names(df_list_goi[j]), " ", curr_gene, ": Current vs Never Smokers expression"),
-             x = "Group", y = "Expression") +
-      theme(legend.position = "none")
-      print(boxplot)
-  }
+        #limits = c(0,14), 
+        minor_breaks = NULL) + 
+      labs(title = paste0(curr_gene, ": Current vs Never Smokers expression"),
+             # x = "Group", 
+             y = "Expression") +
+      theme(legend.position = "none") + 
+      scale_fill_manual(values = c("current_smokers" ="cadetblue3", "never_smokers" = "indianred2")) +  # Set custom colors
+      theme(
+        legend.title = element_blank(),  # Remove legend title
+        legend.position = "right",  # Move the legend to the right side
+        legend.key = element_rect(fill = "white", color = "white"),  # Make the legend boxes white with black border
+        axis.text.x = element_blank()  # Remove x-axis labels
+       )
+    print(boxplot)
 }
 ```
 
