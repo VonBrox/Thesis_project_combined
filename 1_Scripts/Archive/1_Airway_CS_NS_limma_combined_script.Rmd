@@ -62,6 +62,7 @@ GSE63127 (note this is my reference "CS vs NS" dataset):
 - PCA could suggest batch effect or confounder (4 distinct clusters not based on smoking status)
 - Skewed towards low FDR values
 
+###########
 
 # GSE4302
 
@@ -108,12 +109,11 @@ boxplot(exprs(gset)) # Looks ok
 max(exprs(gset)) # 14.29166
 min(exprs(gset)) # 3.490193
 # 3.49 is an odd minimum
-# Based on above, just need quantile normalization
 
-exprs(gset) <- normalizeBetweenArrays(exprs(gset)) # quantile normalization
-boxplot(exprs(gset)) # Looks ok
-max(exprs(gset)) # 14.08906
-min(exprs(gset)) # 3.568253
+#exprs(gset) <- normalizeBetweenArrays(exprs(gset)) # For now trying without quantile normalization
+# boxplot(exprs(gset)) # Looks ok
+# max(exprs(gset)) # 14.08906
+# min(exprs(gset)) # 3.568253
 
 ```
 
@@ -128,6 +128,7 @@ levels(gs) <- groups
 gset$group <- gs
 design <- model.matrix(~group + 0, gset)
 colnames(design) <- levels(gs)
+
 ```
 
 ## PCA plot, and save expression data
@@ -147,8 +148,9 @@ plotMDS(exprs(gset),
 
 
 # Saving expression data for GSE4302
-GSE4302_expr_matrix <- exprs(gset)  # Extract the expression matrix
-GSE4302_sstat_data <- gset$group   # Extract the smoking status labels
+# GSE4302_expr_matrix <- exprs(gset)  # Extract the expression matrix
+# GSE4302_sstat_data <- gset$group   # Extract the smoking status labels
+
 #Gene_Symbol <- gset@featureData@data[["Gene.symbol"]] # Get the gene symbols to replace probeset IDs with
 # Save the data
 # write.table(GSE4302_expr_matrix, "../../../Former_Smokers_Aim_1/2_Output/GEO2R_limma_analysis/GSE4302/GSE4302_expr_matrix.txt")
@@ -182,7 +184,7 @@ tT <- topTable(fit2, adjust="fdr", sort.by="B", number=Inf)
 tT <- subset(tT, select=c("ID","Gene.symbol","logFC","adj.P.Val"))
 
 # Filter unlabelled genes, duplicate genes
-GSE4302_CSvsNS_GEO2R_limma_all <- tT %>%
+GSE4302_CS_NS_GEO2R_limma_all <- tT %>%
   filter(Gene.symbol!= "") %>% # Remove blank gene symbols
   group_by(Gene.symbol) %>%
   slice_min(adj.P.Val, with_ties = TRUE) %>% 
@@ -190,26 +192,23 @@ GSE4302_CSvsNS_GEO2R_limma_all <- tT %>%
   ungroup()
 
 # Filter for FDR < 0.05
-GSE4302_CSvsNS_GEO2R_limma_sig <- GSE4302_CSvsNS_GEO2R_limma_all %>%
+GSE4302_CS_NS_GEO2R_limma_sig <- GSE4302_CS_NS_GEO2R_limma_all %>%
   filter(adj.P.Val <= 0.05) # Remove FDR > 0.05 genes
 
 # Checking for ties
-ties <- GSE4302_CSvsNS_GEO2R_limma_sig %>%
+ties <- GSE4302_CS_NS_GEO2R_limma_sig %>%
   group_by(Gene.symbol) %>%
   filter(n() > 1) %>%
   ungroup()
 print(ties)
 # Only tie is NQO1. Both probes have s suffix. I will arbitrarily choose the one of magnitude 1.56 rather than 1.50
-GSE4302_CSvsNS_GEO2R_limma_sig <- GSE4302_CSvsNS_GEO2R_limma_sig %>%
+GSE4302_CS_NS_GEO2R_limma_sig <- GSE4302_CS_NS_GEO2R_limma_sig %>%
   filter(ID != "201468_s_at") 
 
-head(GSE4302_CSvsNS_GEO2R_limma_sig)
-nrow(GSE4302_CSvsNS_GEO2R_limma_sig) # 3050 is a heckuva lot of genes for a small dataset...
+head(GSE4302_CS_NS_GEO2R_limma_sig)
+nrow(GSE4302_CS_NS_GEO2R_limma_sig) # 3508 is a heckuva lot of genes for a small dataset...
 
-# Save the output (relative path was giving me issues)
-#write.table(GSE4302_CSvsNS_GEO2R_limma_sig, "/Users/liambrockley/Desktop/Former_Smokers_Project/Former_Smokers_Aim_1/2_Output/GEO2R_limma_analysis/GSE4302/GSE4302_CSvsNS_GEO2R_limma_sig.txt", 
-#            sep = '\t', col.names = TRUE, row.names = FALSE
-#)
+
 ```
 
 
@@ -218,10 +217,10 @@ nrow(GSE4302_CSvsNS_GEO2R_limma_sig) # 3050 is a heckuva lot of genes for a smal
 # Visualize and quality control test results.
 # Build histogram of P-values for all genes. Normal test
 # assumption is that most genes are not differentially expressed.
-hist(GSE4302_CSvsNS_GEO2R_limma_all$adj.P.Val, col = "grey", border = "white", xlab = "P-adj",
+hist(GSE4302_CS_NS_GEO2R_limma_all$adj.P.Val, col = "grey", border = "white", xlab = "P-adj",
      ylab = "Number of genes", main = "P-adj value distribution")
 # Definitely skewed towards significant genes
-hist(GSE4302_CSvsNS_GEO2R_limma_sig$adj.P.Val, col = "grey", border = "white", xlab = "P-adj",
+hist(GSE4302_CS_NS_GEO2R_limma_sig$adj.P.Val, col = "grey", border = "white", xlab = "P-adj",
      ylab = "Number of genes", main = "P-adj value distribution")
 # Likewise a skew towards really significant genes within the significant genes
 
@@ -255,10 +254,10 @@ library(ggrepel)
 library(ggpmisc)
 
 # Renaming generically for convenience
-DEGs <- GSE4302_CSvsNS_GEO2R_limma_all
-DEGs_significant <- GSE4302_CSvsNS_GEO2R_limma_sig
+DEGs <- GSE4302_CS_NS_GEO2R_limma_all
+DEGs_significant <- GSE4302_CS_NS_GEO2R_limma_sig
 
-GSE4302_CSvsNS_GEO2R_limma_volcano <- ggplot(DEGs, aes(x = logFC, y = -log10(adj.P.Val))) +
+GSE4302_CS_NS_GEO2R_limma_volcano <- ggplot(DEGs, aes(x = logFC, y = -log10(adj.P.Val))) +
   geom_point(aes(color = ifelse(adj.P.Val < 0.05, "red", "black")), alpha = 0.6, show.legend = FALSE) +
   stat_dens2d_labels(data = DEGs_significant, 
                      aes(label = Gene.symbol), geom = "text_repel", 
@@ -274,9 +273,16 @@ GSE4302_CSvsNS_GEO2R_limma_volcano <- ggplot(DEGs, aes(x = logFC, y = -log10(adj
        x = "log2FC",
        y = "-log10(FDR)",
        caption = paste0("significant DEGs: n = ", nrow(DEGs_significant)))
-GSE4302_CSvsNS_GEO2R_limma_volcano
+GSE4302_CS_NS_GEO2R_limma_volcano
 ```
 
+### Save the output
+```{r}
+write.table(GSE4302_CS_NS_GEO2R_limma_sig, '../2_Outputs/1_Airway_DEGs/GSE4302_CS_NS_GEO2R_limma_sig_20241114.txt', sep = '\t')
+```
+
+
+###########
 
 # GSE7895
 
@@ -326,10 +332,10 @@ boxplot(exprs(gset)) # Same range of values, with similar-looking ranges, but no
 # Narrow range, therefore no log2 normalization needed
 # Boxplots similar but nor identical, therefore quantile normalization needed (standard)
 
-exprs(gset) <- normalizeBetweenArrays(exprs(gset)) # quantile normalization
-boxplot(exprs(gset)) # Now the boxplots look exactly the same
-min(exprs(gset)) # -0.2121706
-max(exprs(gset)) # 14.55543
+#exprs(gset) <- normalizeBetweenArrays(exprs(gset)) # For now we are not doing quantile normalization
+# boxplot(exprs(gset)) # Now the boxplots look exactly the same
+# min(exprs(gset)) # -0.2121706
+# max(exprs(gset)) # 14.55543
 
 ```
 
@@ -353,9 +359,10 @@ plotMDS(exprs(gset),
         gene.selection = "common",
         main = "PCA for CS vs NS GSE7895",
         col = colz,
-        labels = gs
+        pch = 1
+        #labels = gs
         )
-# Separation doesn't look perfect here, but definitely a light split.
+# Separation doesn't look good here, but definitely a light split.
 
 # Saving expression data for GSE7895
 # GSE7895_expr_matrix <- exprs(gset)  # Extract the expression matrix
@@ -399,6 +406,7 @@ fit2 <- eBayes(fit2, proportion = 0.01) # Proportion is "assumed proportion of g
 tT <- topTable(fit2, adjust="fdr", sort.by="B", number=Inf) # Inf shows all the significant genes
 
 tT <- subset(tT, select=c("ID","Gene.symbol","logFC","adj.P.Val"))
+
 head(tT)
 ```
 
@@ -406,21 +414,21 @@ head(tT)
 ```{r}
 
 # Now I want to filter unlabelled genes, duplicate genes, and adj.P.Val < 0.05
-GSE7895_CSvsNS_GEO2R_limma_all <- tT %>%
+GSE7895_CS_NS_GEO2R_limma_all <- tT %>%
   filter(Gene.symbol != "") %>% # Remove blank gene symbols
 #  filter(adj.P.Val <= 0.05) %>% # Remove FDR > 0.05 genes
   group_by(Gene.symbol) %>%
   slice_min(adj.P.Val, with_ties = TRUE) %>% 
   # For probesets mapping to same gene, keep one with lowest FDR. Keep ties for now to check later.
   ungroup()
-head(GSE7895_CSvsNS_GEO2R_limma_all)
+head(GSE7895_CS_NS_GEO2R_limma_all)
 
-GSE7895_CSvsNS_GEO2R_limma_sig <- GSE7895_CSvsNS_GEO2R_limma_all %>%
+GSE7895_CS_NS_GEO2R_limma_sig <- GSE7895_CS_NS_GEO2R_limma_all %>%
   filter(adj.P.Val <= 0.05) # Remove FDR > 0.05 genes
-head(GSE7895_CSvsNS_GEO2R_limma_sig)
+head(GSE7895_CS_NS_GEO2R_limma_sig)
 
 # Checking for ties
-ties <- GSE7895_CSvsNS_GEO2R_limma_sig %>%
+ties <- GSE7895_CS_NS_GEO2R_limma_sig %>%
   group_by(Gene.symbol) %>%
   filter(n() > 1) %>%
   ungroup()
@@ -429,15 +437,15 @@ print(ties)
 # One of the 2 probe IDs has an 'x' suffix.
 # See the description of suffixes at https://rmflight.github.io/affyMM/
 # Given this, I will decide to remove the one with the 'x' suffix.
-GSE7895_CSvsNS_GEO2R_limma_sig <- GSE7895_CSvsNS_GEO2R_limma_sig %>%
+GSE7895_CS_NS_GEO2R_limma_sig <- GSE7895_CS_NS_GEO2R_limma_sig %>%
   filter(ID != '214303_x_at')
-head(GSE7895_CSvsNS_GEO2R_limma_sig)
+head(GSE7895_CS_NS_GEO2R_limma_sig)
 
 # **Note: Maybe I should be taking the suffixes into account in the initial filtering? As I think I did a while back? To look into.
 
 
 # Save this output
-# write.table(GSE7895_CSvsNS_GEO2R_limma_sig, file='/Users/liambrockley/Desktop/Former_Smokers_Project/Former_Smokers_Aim_1/2_Output/GEO2R_limma_analysis/GSE7895/GSE7895_CS_NS_GEO2R_limma_sig.txt', row.names=FALSE, sep="\t")
+# write.table(GSE7895_CS_NS_GEO2R_limma_sig, file='/Users/liambrockley/Desktop/Former_Smokers_Project/Former_Smokers_Aim_1/2_Output/GEO2R_limma_analysis/GSE7895/GSE7895_CS_NS_GEO2R_limma_sig.txt', row.names=FALSE, sep="\t")
 
 ```
 
@@ -447,7 +455,7 @@ head(GSE7895_CSvsNS_GEO2R_limma_sig)
 # Visualize and quality control test results.
 # Build histogram of P-values for all genes. Normal test
 # assumption is that most genes are not differentially expressed.
-hist(GSE7895_CSvsNS_GEO2R_limma_all$adj.P.Val, col = "grey", border = "white", xlab = "P-adj",
+hist(GSE7895_CS_NS_GEO2R_limma_all$adj.P.Val, col = "grey", border = "white", xlab = "P-adj",
      ylab = "Number of genes", main = "P-adj value distribution")
 # Looks like most genes are not significant. Good.
 
@@ -486,10 +494,10 @@ library(ggrepel)
 library(ggpmisc)
 
 # Renaming generically for convenience
-DEGs <- GSE7895_CSvsNS_GEO2R_limma_all
-DEGs_significant <- GSE7895_CSvsNS_GEO2R_limma_sig
+DEGs <- GSE7895_CS_NS_GEO2R_limma_all
+DEGs_significant <- GSE7895_CS_NS_GEO2R_limma_sig
 
-GSE7895_CSvsNS_GEO2R_limma_volcano <- ggplot(DEGs, aes(x = logFC, y = -log10(adj.P.Val))) +
+GSE7895_CS_NS_GEO2R_limma_volcano <- ggplot(DEGs, aes(x = logFC, y = -log10(adj.P.Val))) +
   geom_point(aes(color = ifelse(adj.P.Val < 0.05, "red", "black")), alpha = 0.6, show.legend = FALSE) +
   stat_dens2d_labels(data = DEGs_significant, 
                      aes(label = Gene.symbol), geom = "text_repel", 
@@ -505,8 +513,19 @@ GSE7895_CSvsNS_GEO2R_limma_volcano <- ggplot(DEGs, aes(x = logFC, y = -log10(adj
        x = "log2FC",
        y = "-log10(FDR)",
        caption = paste0("significant DEGs: n = ", nrow(DEGs_significant)))
-GSE7895_CSvsNS_GEO2R_limma_volcano
+GSE7895_CS_NS_GEO2R_limma_volcano
 ```
+
+### Saving output
+```{r}
+
+write.table(GSE7895_CS_NS_GEO2R_limma_sig, "../2_Outputs/1_Airway_DEGs/GSE7895_CS_NS_GEO2R_limma_sig_20241114.txt", sep = '\t')
+
+```
+
+
+
+###########
 
 # GSE14633
 
@@ -560,7 +579,7 @@ min(exprs(gset))
 ```{r}
 
 ## Quantile normalization ##
-exprs(gset) <- normalizeBetweenArrays(exprs(gset)) # quantile normalization
+# exprs(gset) <- normalizeBetweenArrays(exprs(gset)) # quantile normalization
 
 hist(as.matrix(exprs(gset))) # still good
 boxplot(exprs(gset)) # Now identical. Why is one gene popping out there?
@@ -592,7 +611,7 @@ plotMDS(exprs(gset),
         gene.selection = "common",
         main = "PCA for CS vs NS GSE19027",
         col = colz,
-        labels = gs
+        pch = 1
 )
 # Definite clean separation here!
 
@@ -664,7 +683,7 @@ for (i in 1:length(tT$gene_assignment)){
 head(tT)
 
 # Filter unlabelled genes, duplicate genes, and adj.P.Val < 0.05
-GSE14633_CSvsNS_GEO2R_limma_all <- tT %>%
+GSE14633_CS_NS_GEO2R_limma_all <- tT %>%
   filter(gene_assignment!= "") %>% # Remove blank gene symbols
  # filter(adj.P.Val <= 0.05) %>% # Remove FDR > 0.05 genes
   group_by(gene_assignment) %>%
@@ -672,22 +691,22 @@ GSE14633_CSvsNS_GEO2R_limma_all <- tT %>%
   # For probesets mapping to same gene, keep one with lowest FDR. Keep ties for now to check later.
   ungroup()
 
-GSE14633_CSvsNS_GEO2R_limma_sig <- GSE14633_CSvsNS_GEO2R_limma_all %>%
+GSE14633_CS_NS_GEO2R_limma_sig <- GSE14633_CS_NS_GEO2R_limma_all %>%
   filter(adj.P.Val <= 0.05)
 
 # Checking for ties
-ties <- GSE14633_CSvsNS_GEO2R_limma_sig %>%
+ties <- GSE14633_CS_NS_GEO2R_limma_sig %>%
   group_by(gene_assignment) %>%
   filter(n() > 1) %>%
   ungroup()
 print(ties) 
 # No ties
 
-head(GSE14633_CSvsNS_GEO2R_limma_sig)
+head(GSE14633_CS_NS_GEO2R_limma_sig)
 
 ## Save table
 
-#write.table(GSE14633_CSvsNS_GEO2R_limma_sig, file='/Users/liambrockley/Desktop/Former_Smokers_Project/Former_Smokers_Aim_1/2_Output/GEO2R_limma_analysis/GSE14633/GSE14633_CS_NS_GEO2R_limma_sig.txt', row.names=FALSE, sep="\t")
+#write.table(GSE14633_CS_NS_GEO2R_limma_sig, file='/Users/liambrockley/Desktop/Former_Smokers_Project/Former_Smokers_Aim_1/2_Output/GEO2R_limma_analysis/GSE14633/GSE14633_CS_NS_GEO2R_limma_sig.txt', row.names=FALSE, sep="\t")
 
 ```
 
@@ -696,7 +715,7 @@ head(GSE14633_CSvsNS_GEO2R_limma_sig)
 # Visualize and quality control test results.
 # Build histogram of P-values for all genes. Normal test
 # assumption is that most genes are not differentially expressed.
-hist(GSE14633_CSvsNS_GEO2R_limma_all$adj.P.Val, col = "grey", border = "white", xlab = "P-adj",
+hist(GSE14633_CS_NS_GEO2R_limma_all$adj.P.Val, col = "grey", border = "white", xlab = "P-adj",
      ylab = "Number of genes", main = "P-adj value distribution")
 # This is probably good, insignificant genes are a vast majority.
 
@@ -738,10 +757,10 @@ library(ggpmisc)
 library(dplyr)
 
 # Renaming generically for convenience
-DEGs <- GSE14633_CSvsNS_GEO2R_limma_all
-DEGs_significant <- GSE14633_CSvsNS_GEO2R_limma_sig
+DEGs <- GSE14633_CS_NS_GEO2R_limma_all
+DEGs_significant <- GSE14633_CS_NS_GEO2R_limma_sig
 
-GSE14633_CSvsNS_GEO2R_limma_volcano <- ggplot(DEGs, aes(x = logFC, y = -log10(adj.P.Val))) +
+GSE14633_CS_NS_GEO2R_limma_volcano <- ggplot(DEGs, aes(x = logFC, y = -log10(adj.P.Val))) +
   geom_point(aes(color = ifelse(adj.P.Val < 0.05, "red", "black")), alpha = 0.6, show.legend = FALSE) +
   stat_dens2d_labels(data = DEGs_significant, 
                      aes(label = gene_assignment), geom = "text_repel", 
@@ -757,8 +776,17 @@ GSE14633_CSvsNS_GEO2R_limma_volcano <- ggplot(DEGs, aes(x = logFC, y = -log10(ad
        x = "log2FC",
        y = "-log10(FDR)",
        caption = paste0("significant DEGs: n = ", nrow(DEGs_significant)))
-GSE14633_CSvsNS_GEO2R_limma_volcano
+GSE14633_CS_NS_GEO2R_limma_volcano
 ```
+
+### Saving output
+```{r}
+
+write.table(GSE14633_CS_NS_GEO2R_limma_sig, "../2_Outputs/1_Airway_DEGs/GSE14633_CS_NS_GEO2R_limma_sig_20241114.txt", sep = '\t')
+
+```
+
+###########
 
 # GSE19027
 
@@ -893,7 +921,7 @@ tT <- topTable(fit2, adjust="fdr", sort.by="B", number=Inf)
 tT <- subset(tT, select=c("ID","Gene.symbol","logFC","adj.P.Val"))
 
 # Now I want to filter unlabelled genes, duplicate genes, and adj.P.Val < 0.05
-GSE19027_CSvsNS_GEO2R_limma_all <- tT %>%
+GSE19027_CS_NS_GEO2R_limma_all <- tT %>%
   filter(Gene.symbol != "") %>% # Remove blank gene symbols
 #  filter(adj.P.Val <= 0.05) %>% # Remove FDR > 0.05 genes
   group_by(Gene.symbol) %>%
@@ -902,11 +930,11 @@ GSE19027_CSvsNS_GEO2R_limma_all <- tT %>%
   ungroup()
 
 # filter to FDR < 0.05
-GSE19027_CSvsNS_GEO2R_limma_sig <- GSE19027_CSvsNS_GEO2R_limma_all %>%
+GSE19027_CS_NS_GEO2R_limma_sig <- GSE19027_CS_NS_GEO2R_limma_all %>%
   filter(adj.P.Val <= 0.05) # Remove FDR > 0.05 genes
 
 # Checking for ties
-ties <- GSE19027_CSvsNS_GEO2R_limma_sig %>%
+ties <- GSE19027_CS_NS_GEO2R_limma_sig %>%
   group_by(Gene.symbol) %>%
   filter(n() > 1) %>%
   ungroup()
@@ -914,14 +942,14 @@ print(ties)
 # The only remaining tie is for MST1. Both probesets have the x suffix. 
 # The 2 values are -1.57 and -0.990
 # I will arbitrarily decide to keep the probe with -1.57 to err on the side of finding relevant genes.
-GSE19027_CSvsNS_GEO2R_limma_sig <- GSE19027_CSvsNS_GEO2R_limma_sig %>%
+GSE19027_CS_NS_GEO2R_limma_sig <- GSE19027_CS_NS_GEO2R_limma_sig %>%
   filter(ID != '216320_x_at')
 
-head(GSE19027_CSvsNS_GEO2R_limma_sig)
-nrow(GSE19027_CSvsNS_GEO2R_limma_sig)
+head(GSE19027_CS_NS_GEO2R_limma_sig)
+nrow(GSE19027_CS_NS_GEO2R_limma_sig)
 
 # Save output
-#write.table(GSE19027_CSvsNS_GEO2R_limma_sig, file='/Users/liambrockley/Desktop/Former_Smokers_Project/Former_Smokers_Aim_1/2_Output/GEO2R_limma_analysis/GSE19027/GSE19027_CS_NS_GEO2R_limma_sig.txt', row.names=FALSE, sep="\t")
+#write.table(GSE19027_CS_NS_GEO2R_limma_sig, file='/Users/liambrockley/Desktop/Former_Smokers_Project/Former_Smokers_Aim_1/2_Output/GEO2R_limma_analysis/GSE19027/GSE19027_CS_NS_GEO2R_limma_sig.txt', row.names=FALSE, sep="\t")
 
 ```
 
@@ -931,7 +959,7 @@ Note that there seems to be something amiss with the FDR value distribution.
 
 ## Visualize and quality control test results. #
     
-hist(GSE19027_CSvsNS_GEO2R_limma_all$adj.P.Val, col = "grey", border = "white", xlab = "P-adj",
+hist(GSE19027_CS_NS_GEO2R_limma_all$adj.P.Val, col = "grey", border = "white", xlab = "P-adj",
      ylab = "Number of genes", main = "P-adj value distribution for all genes post-filter")
 # Definitely skewed disproportionately towards significant, low-FDR genes. To look into as a problem.
 
@@ -969,10 +997,10 @@ library(ggrepel)
 library(ggpmisc)
 
 # Renaming generically for convenience
-DEGs <- GSE19027_CSvsNS_GEO2R_limma_all
-DEGs_significant <- GSE19027_CSvsNS_GEO2R_limma_sig
+DEGs <- GSE19027_CS_NS_GEO2R_limma_all
+DEGs_significant <- GSE19027_CS_NS_GEO2R_limma_sig
 
-GSE19027_CSvsNS_GEO2R_limma_volcano <- ggplot(DEGs, aes(x = logFC, y = -log10(adj.P.Val))) +
+GSE19027_CS_NS_GEO2R_limma_volcano <- ggplot(DEGs, aes(x = logFC, y = -log10(adj.P.Val))) +
   geom_point(aes(color = ifelse(adj.P.Val < 0.05, "red", "black")), alpha = 0.6, show.legend = FALSE) +
   stat_dens2d_labels(data = DEGs_significant, 
                      aes(label = Gene.symbol), geom = "text_repel", 
@@ -988,7 +1016,7 @@ GSE19027_CSvsNS_GEO2R_limma_volcano <- ggplot(DEGs, aes(x = logFC, y = -log10(ad
        x = "log2FC",
        y = "-log10(FDR)",
        caption = paste0("significant DEGs: n = ", nrow(DEGs_significant)))
-GSE19027_CSvsNS_GEO2R_limma_volcano
+GSE19027_CS_NS_GEO2R_limma_volcano
 ```
 
 # GSE20257
@@ -1215,7 +1243,7 @@ library(ggpmisc)
 DEGs <- GSE20257_GEO2R_limma_all
 DEGs_significant <- GSE20257_GEO2R_limma_sig
 
-GSE20257_CSvsNS_GEO2R_limma_volcano <- ggplot(DEGs, aes(x = logFC, y = -log10(adj.P.Val))) +
+GSE20257_CS_NS_GEO2R_limma_volcano <- ggplot(DEGs, aes(x = logFC, y = -log10(adj.P.Val))) +
   geom_point(aes(color = ifelse(adj.P.Val < 0.05, "red", "black")), alpha = 0.6, show.legend = FALSE) +
   stat_dens2d_labels(data = DEGs_significant, 
                      aes(label = Gene.symbol), geom = "text_repel", 
@@ -1231,7 +1259,7 @@ GSE20257_CSvsNS_GEO2R_limma_volcano <- ggplot(DEGs, aes(x = logFC, y = -log10(ad
        x = "log2FC",
        y = "-log10(FDR)",
        caption = paste0("significant DEGs: n = ", nrow(DEGs_significant)))
-GSE20257_CSvsNS_GEO2R_limma_volcano
+GSE20257_CS_NS_GEO2R_limma_volcano
 ```
 
 # GSE63127
@@ -1638,7 +1666,7 @@ tT <- subset(tT, select=c("ID","Gene.symbol","logFC","adj.P.Val"))
 
 
 # Filter unlabelled genes, duplicate genes
-GSE63127_CSvsNS_GEO2R_limma_all <- tT %>%
+GSE63127_CS_NS_GEO2R_limma_all <- tT %>%
   filter(Gene.symbol!= "") %>% # Remove blank gene symbols
   group_by(Gene.symbol) %>%
   slice_min(adj.P.Val, with_ties = TRUE) %>% 
@@ -1646,22 +1674,22 @@ GSE63127_CSvsNS_GEO2R_limma_all <- tT %>%
   ungroup()
 
 # Filter for FDR < 0.05
-GSE63127_CSvsNS_GEO2R_limma_sig <- GSE63127_CSvsNS_GEO2R_limma_all %>%
+GSE63127_CS_NS_GEO2R_limma_sig <- GSE63127_CS_NS_GEO2R_limma_all %>%
   filter(adj.P.Val <= 0.05) # Remove FDR > 0.05 genes
 
 # Checking for ties
-ties <- GSE63127_CSvsNS_GEO2R_limma_sig %>%
+ties <- GSE63127_CS_NS_GEO2R_limma_sig %>%
   group_by(Gene.symbol) %>%
   filter(n() > 1) %>%
   ungroup()
 print(ties)
 # No ties
 
-head(GSE63127_CSvsNS_GEO2R_limma_sig)
-nrow(GSE63127_CSvsNS_GEO2R_limma_sig)
+head(GSE63127_CS_NS_GEO2R_limma_sig)
+nrow(GSE63127_CS_NS_GEO2R_limma_sig)
 
 # Save the output (used absolute path for convenience)
-#write.table(GSE63127_CSvsNS_GEO2R_limma_sig, "/Users/liambrockley/Desktop/Former_Smokers_Project/Former_Smokers_Aim_1/2_Output/GEO2R_limma_analysis/GSE63127/GSE63127_CSvsNS_GEO2R_limma_sig.txt", sep = '\t', col.names = TRUE, row.names = FALSE)
+#write.table(GSE63127_CS_NS_GEO2R_limma_sig, "/Users/liambrockley/Desktop/Former_Smokers_Project/Former_Smokers_Aim_1/2_Output/GEO2R_limma_analysis/GSE63127/GSE63127_CS_NS_GEO2R_limma_sig.txt", sep = '\t', col.names = TRUE, row.names = FALSE)
 
 
 ```
@@ -1673,7 +1701,7 @@ nrow(GSE63127_CSvsNS_GEO2R_limma_sig)
 # Build histogram of P-values for all genes. Normal test
 # assumption is that most genes are not differentially expressed.
 
-hist(GSE63127_CSvsNS_GEO2R_limma_all$adj.P.Val, col = "grey", border = "white", xlab = "P-adj",
+hist(GSE63127_CS_NS_GEO2R_limma_all$adj.P.Val, col = "grey", border = "white", xlab = "P-adj",
      ylab = "Number of genes", main = "P-adj value distribution")
 ## This looks very skewed towards significant genes. An issue. Look into this.
 ## Now checking pre-processed distribution
@@ -1732,10 +1760,10 @@ library(ggrepel)
 library(ggpmisc)
 
 # Renaming generically for convenience
-DEGs <- GSE63127_CSvsNS_GEO2R_limma_all
-DEGs_significant <- GSE63127_CSvsNS_GEO2R_limma_sig
+DEGs <- GSE63127_CS_NS_GEO2R_limma_all
+DEGs_significant <- GSE63127_CS_NS_GEO2R_limma_sig
 
-GSE63127_CSvsNS_GEO2R_limma_volcano <- ggplot(DEGs, aes(x = logFC, y = -log10(adj.P.Val))) +
+GSE63127_CS_NS_GEO2R_limma_volcano <- ggplot(DEGs, aes(x = logFC, y = -log10(adj.P.Val))) +
   geom_point(aes(color = ifelse(adj.P.Val < 0.05, "red", "black")), alpha = 0.6, show.legend = FALSE) +
   stat_dens2d_labels(data = DEGs_significant, 
                      aes(label = Gene.symbol), geom = "text_repel", 
@@ -1751,7 +1779,7 @@ GSE63127_CSvsNS_GEO2R_limma_volcano <- ggplot(DEGs, aes(x = logFC, y = -log10(ad
        x = "log2FC",
        y = "-log10(FDR)",
        caption = paste0("significant DEGs: n = ", nrow(DEGs_significant)))
-GSE63127_CSvsNS_GEO2R_limma_volcano
+GSE63127_CS_NS_GEO2R_limma_volcano
 ```
 
 # Making a combined table to rank genes of interest and compare studies
@@ -1785,7 +1813,7 @@ GSE20257_CS_NS_GEO2R_limma_sig <- read.table("/Users/liambrockley/Desktop/Former
 colnames(GSE20257_CS_NS_GEO2R_limma_sig) <- GSE20257_CS_NS_GEO2R_limma_sig[1,]
 GSE20257_CS_NS_GEO2R_limma_sig <- GSE20257_CS_NS_GEO2R_limma_sig[-1,]
 
-GSE63127_CS_NS_GEO2R_limma_sig <- read.table("/Users/liambrockley/Desktop/Former_Smokers_Project/Former_Smokers_Aim_1/2_Output/GEO2R_limma_analysis/GSE63127/GSE63127_CSvsNS_GEO2R_limma_sig.txt")
+GSE63127_CS_NS_GEO2R_limma_sig <- read.table("/Users/liambrockley/Desktop/Former_Smokers_Project/Former_Smokers_Aim_1/2_Output/GEO2R_limma_analysis/GSE63127/GSE63127_CS_NS_GEO2R_limma_sig.txt")
 # For some reason column names are giving me grief, so I have to set them
 colnames(GSE63127_CS_NS_GEO2R_limma_sig) <- GSE63127_CS_NS_GEO2R_limma_sig[1,]
 GSE63127_CS_NS_GEO2R_limma_sig <- GSE63127_CS_NS_GEO2R_limma_sig[-1,]

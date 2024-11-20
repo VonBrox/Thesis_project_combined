@@ -1,0 +1,942 @@
+---
+title: "tumor_airway_comparisons_combined_script"
+output: html_document
+date: "2024-10-11"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+This script will include all steps in the "main pipeline" part of my thesis project. This includes differential analysis of the reference airway Current vs never smoker dataset (A1, GSE63127), differential expression analysis of the TCGA-LUAD lung adenocarcinoma expression and methylation datasets, and the reference "persistent" airway current vs former vs never smoker dataset (A2, GSE7895). This includes all normalization, quality control, and filtering steps.
+
+Notes: 
+- I will opt to keep all genes with FDR < 0.05 until the step with filtering and dataset comparisons.
+
+# 1. Differential expression analysis of reference airway current vs never smoker dataset (A1, GSE63127)
+
+## 1.1 Loading dataset
+```{r}
+
+# Version info: R 4.2.2, Biobase 2.58.0, GEOquery 2.66.0, limma 3.54.0
+################################################################
+#   Differential expression analysis with limma
+library(GEOquery)
+library(limma)
+library(umap)
+library(dplyr)
+
+# load series and platform data from GEO (date: 2024/10/15)
+gset <- getGEO("GSE63127", GSEMatrix =TRUE, AnnotGPL=TRUE)
+if (length(gset) > 1) idx <- grep("GPL570", attr(gset, "names")) else idx <- 1
+gset <- gset[[idx]]
+
+# make proper column names to match toptable 
+fvarLabels(gset) <- make.names(fvarLabels(gset))
+
+# group membership for all samples
+gsms <- paste0("X00100011111X00000000000X00000X000000000000X000X00",
+               "XX00X0XXXXXXXXX1111111111111111111111X111X11111111",
+               "XXXX1XXXXXXXXXXXXXXXXXXXXXXXX001000000010100111111",
+               "01110111110011111001110011101011111001110101100011",
+               "111111111111111111111111111111")
+sml <- strsplit(gsms, split="")[[1]]
+
+# filter out excluded samples (marked as "X")
+sel <- which(sml != "X")
+sml <- sml[sel]
+gset <- gset[ ,sel]
+
+gset <- gset[complete.cases(exprs(gset)), ] # skip missing values
+length(sml) # 182 samples
+
+```
+
+## 1.2 Quality control checks and normalization 
+```{r}
+
+## Make histograms and boxplots to check if the data is log-transformed and needs quantile normalization ##
+hist(as.matrix(exprs(gset))) # skewed left, needs log2 transform
+boxplot(exprs(gset)) # scary-looking
+max(exprs(gset)) # 136808
+min(exprs(gset)) # 0.0657913
+# Should do both log2 and quantile normalization
+
+## log2 and Quantile normalization ##
+exprs(gset) <- log2(exprs(gset)+1)
+exprs(gset) <- normalizeBetweenArrays(exprs(gset)) # quantile normalization
+
+hist(as.matrix(exprs(gset))) # much better
+boxplot(exprs(gset)) # All identical
+min(exprs(gset)) # 0.3185814
+max(exprs(gset)) # 16.17398
+
+```
+
+## 1.3 Checking and correcting batch effect / sources of variation
+
+### 1.3.1: Download and clean up the phenotypic information table from the dataset
+```{r}
+# assign samples to groups and set up design matrix
+gs <- factor(sml)
+groups <- make.names(c("non-smoker","smoker"))
+levels(gs) <- groups
+gset$group <- gs
+
+phenotypic_data <- pData(gset)  # Extract phenotypic data
+
+# The phenotypic data is terrible.
+# This is filtered down to the samples that were included.
+# I will first try to clean up the phenotypic data.
+head(phenotypic_data)
+
+# So I think the features I want to keep will be:
+# Dates of submission/updates etc, sex, ethnicity, smoking status
+# Keep the columns that might contain data of interest, which will need to be cleaned up.
+
+# List of column names I want to keep and clean up into usable labels
+columns_to_find <- c("geo_accession","status","submission_date","last_update_date","characteristics_ch1","characteristics_ch1.1","characteristics_ch1.2","characteristics_ch1.3","age:ch1","cilia length:ch1","ethnic group:ch1","ethnicity:ch1","serum 25-oh-d:ch1","sex:ch1","smoking status:ch1","group")
+
+# Get the column indexes
+indexes <- sapply(columns_to_find, function(col_name) which(names(phenotypic_data) == col_name))
+indexes <- unlist(indexes)
+
+phenotypic_data <- phenotypic_data[,c(indexes)]
+
+# Now I need to parse out sex, ethnicity, smoking status, and age, vitamin D, pack years.
+
+#Rename "group" as "smoking status"
+names(phenotypic_data)[16] <- "smoking_status"
+
+## Grabbing ethnicity values from the columns ##
+# Initialize a new column "ethnicity" with NA values
+phenotypic_data$ethnicity <- NA
+
+# Function to find 'eth' in a row and return the corresponding value
+find_ethnicity <- function(row) {
+  eth_column <- which(grepl('eth', row))
+  if (length(eth_column) > 0) {
+    return(row[eth_column])
+  } else {
+    return(NA)
+  }
+}
+# Apply the function row-wise to populate the "ethnicity" column
+phenotypic_data$ethnicity <- apply(phenotypic_data, 1, find_ethnicity)
+
+## Grabbing sex values from the columns ##
+# Initialize a new column "sex" with NA values
+phenotypic_data$sex <- NA
+
+# Function to find 'sex' in a row and return the corresponding value
+find_sex <- function(row) {
+  sex_column <- which(grepl('sex', row))
+  if (length(sex_column) > 0) {
+    return(row[sex_column])
+  } else {
+    return(NA)
+  }
+}
+# Apply the function row-wise to populate the "sex" column
+phenotypic_data$sex <- apply(phenotypic_data, 1, find_sex)
+
+
+## Grabbing pack_years values from the columns ##
+# Initialize a new column "pack_years" with NA values
+phenotypic_data$pack_years <- NA
+
+# Function to find 'pack_years' in a row and return the corresponding value, but just the first instance
+find_pack_years <- function(row) {
+  pack_years_column <- which(grepl('pack', row))
+  if (length(pack_years_column) > 0) {
+    return(row[pack_years_column[1]])
+  } else {
+    return(NA)
+  }
+}
+# Apply the function row-wise to populate the "pack_years" column
+phenotypic_data$pack_years <- apply(phenotypic_data, 1, find_pack_years)
+#unlist the column
+phenotypic_data$pack_years <- unlist(phenotypic_data$pack_years )
+
+
+
+## Grabbing age values from the columns ##
+# Initialize a new column "age" with NA values
+phenotypic_data$age <- NA
+
+# Function to find 'age' in a row and return the corresponding value
+find_age <- function(row) {
+  age_column <- which(grepl('age', row))
+  if (length(age_column) > 0) {
+    return(row[age_column])
+  } else {
+    return(NA)
+  }
+}
+# Apply the function row-wise to populate the "age" column
+phenotypic_data$age <- apply(phenotypic_data, 1, find_age)
+
+
+## Grabbing vitamin_d values from the columns ##
+# Initialize a new column "vitamin_d" with NA values
+phenotypic_data$vitamin_d <- NA
+
+# Function to find 'vitamin_d' in a row and return the corresponding value, first instance
+find_vitamin_d <- function(row) {
+  vitamin_d_column <- which(grepl('vitamin', row))
+  if (length(vitamin_d_column) > 0) {
+    return(row[vitamin_d_column[1]])
+  } else {
+    return(NA)
+  }
+}
+# Apply the function row-wise to populate the "vitamin_d" column
+phenotypic_data$vitamin_d <- apply(phenotypic_data, 1, find_vitamin_d)
+
+## Grabbing vitamin_d values from the columns ##
+# Initialize a new column "vitamin_d" with NA values
+phenotypic_data$vitamin_d <- NA
+
+# Function to find 'vitamin_d' in a row and return the corresponding value, first instance
+find_vitamin_d <- function(row) {
+  vitamin_d_column <- which(grepl('vitamin', row))
+  if (length(vitamin_d_column) > 0) {
+    return(row[vitamin_d_column[1]])
+  } else {
+    return(NA)
+  }
+}
+# Apply the function row-wise to populate the "vitamin_d" column
+phenotypic_data$vitamin_d <- apply(phenotypic_data, 1, find_vitamin_d)
+
+## Grabbing cilia values from the columns ##
+# Initialize a new column "cilia_length" with NA values
+phenotypic_data$cilia_length <- NA
+
+# Function to find 'cilia' in a row and return the corresponding value, first instance
+find_cilia <- function(row) {
+  cilia_column <- which(grepl('cilia', row))
+  if (length(cilia_column) > 0) {
+    return(row[cilia_column[1]])
+  } else {
+    return(NA)
+  }
+}
+# Apply the function row-wise to populate the "cilia" column
+phenotypic_data$cilia_length <- apply(phenotypic_data, 1, find_cilia)
+
+
+
+## Now cut out the messy columns
+phenotypic_data <- phenotypic_data[,-c(5:15)]
+
+## Remove unnecessary prefix info
+phenotypic_data$ethnicity <- gsub(".*: ", "", phenotypic_data$ethnicity )
+phenotypic_data$age <- gsub(".*: ", "", phenotypic_data$age)
+phenotypic_data$sex <- gsub(".*: ", "", phenotypic_data$sex)
+phenotypic_data$vitamin_d <- gsub(".*: ", "", phenotypic_data$vitamin_d)
+phenotypic_data$cilia_length <- gsub(".*: ", "", phenotypic_data$cilia_length)
+
+phenotypic_data$pack_years<- gsub(".*, ", "", phenotypic_data$pack_years)
+phenotypic_data$pack_years<- gsub("pack-years", "", phenotypic_data$pack_years)
+
+
+# Reformat the submission dates to be sortable
+
+phenotypic_data <- phenotypic_data %>%
+  mutate(submission_date = ifelse(submission_date == "Dec 20 2012", "2012-12-20", submission_date)) %>%
+  mutate(submission_date = ifelse(submission_date == "Jan 03 2008", "2008-01-08", submission_date)) %>%
+  mutate(submission_date = ifelse(submission_date == "Jan 31 2013", "2013-01-31", submission_date)) %>%
+  mutate(submission_date = ifelse(submission_date == "Jun 03 2010", "2010-06-03", submission_date)) %>%
+  mutate(submission_date = ifelse(submission_date == "Jun 13 2008", "2008-06-13", submission_date)) %>%
+  mutate(submission_date = ifelse(submission_date == "May 17 2007", "2007-05-17", submission_date)) %>%
+  mutate(submission_date = ifelse(submission_date == "Nov 08 2013", "2013-11-08", submission_date)) %>%
+  mutate(submission_date = ifelse(submission_date == "Nov 10 2014", "2014-11-10", submission_date))
+```
+
+
+### 1.3.2: Plot PCA and use phenotypic information to look for sources of batch effect/variation, and correct for these with ComBat
+```{r}
+
+# assign samples to groups and set up design matrix
+gs <- factor(sml)
+groups <- make.names(c("non-smoker","smoker"))
+levels(gs) <- groups
+gset$group <- gs
+
+
+## Plot PCA 1 ##
+colz <- as.numeric(as.factor(gs)) # Get color values from group
+plotMDS(exprs(gset),
+        gene.selection = "common",
+        main = "PCA for CS vs NS GSE63127",
+        col = colz,
+        pch = 1
+)
+        
+## We have 4 definite clusters that are not based on smoking status. 
+## As such, it is a good idea to check the table of sample phenotypic information to look for sources of variation between samples.
+
+
+pointz <- as.numeric(as.factor(phenotypic_data$submission_date<= "2010-06-03")) # Get point shape values from date of submission: split into 2010 and earlier, post-2010]
+
+## Plot PCA with date information##
+plotMDS(exprs(gset),
+        gene.selection = "common",
+        main = "PCA for CS vs NS GSE63127",
+        col = colz, # Colors smokers red and nonsmokers black
+        pch = pointz
+        #labels = gset$group
+)
+
+# Clearly the source of batch effect in PC1 is submission date post-2010.
+# Note: I found that the split was at 2010 by doing a bit of playing around with other clustering methods, not shown here.
+
+# First batch correction (submission date)
+library(sva)
+library(limma)
+
+# Making a batch vector
+submission_post_2010_batch <- ifelse(phenotypic_data$submission_date < as.Date("2012-01-01"), 1, 2)
+
+# Adjust the expression matrix for submission date batch effect
+exprs_matrix_combat <- ComBat(dat=exprs(gset), batch=submission_post_2010_batch, mod=NULL, par.prior=TRUE, prior.plots=FALSE)
+
+## Plot PCA for expression values after first batch correction ##
+date_corrected_PCA <- plotMDS(exprs_matrix_combat,
+        gene.selection = "common",
+        main = "PCA for CS vs NS GSE63127, corrected for submission date",
+        col = colz, # Colors smokers red and nonsmokers black
+        pch = pointz
+
+)
+
+## Some evidence that second source of variation could be due to sex (but only 11/182 samples have sex labels):
+plotMDS(exprs_matrix_combat,
+        gene.selection = "common",
+        main = "PCA for CS vs NS GSE63127, corrected for submission date",
+        col = colz, # Colors smokers red and nonsmokers black
+        #pch = pointz2 # Using separate shapes for all submission dates
+        labels = phenotypic_data$sex
+)
+## Samples are divided by sex, but 11/182 samples is not enough to draw a conclusion here.
+
+## Second correction for unknown source of variation using ComBat: ##
+
+# Assign batch labels based on the first dimension from MDS (equivalent to PC1), since the dividing line for the batches lies at 0
+unknown_batch_labels <- ifelse(date_corrected_PCA$x < 0, 1, 2)
+
+# Do a second batch correction
+exprs_matrix_combat_2 <- ComBat(dat=exprs_matrix_combat, batch=unknown_batch_labels, mod=NULL, par.prior=TRUE, prior.plots=FALSE)
+
+# View PCA plot
+plotMDS(exprs_matrix_combat_2,
+        gene.selection = "common",
+        main = "PCA for CS vs NS GSE63127 after 2 ComBat corrections",
+        col = colz, # Colors smokers red and nonsmokers black
+        pch = pointz
+        #labels = gset$group
+)
+
+## Now PC1 corresponds quite well to smoking status after the two ComBat corrections.
+
+
+```
+
+## 1.4 Differential expression analysis (limma with vooma)
+```{r}
+
+# Finish setting up the design matrix
+design <- model.matrix(~group + 0, gset)
+colnames(design) <- levels(gs)
+
+
+## Crucial bit: Replace the expression values in gset with the batch corrected ones ##
+exprs(gset) <- as.matrix(exprs_matrix_combat_2)
+
+# calculate precision weights and show plot of mean-variance trend
+v <- vooma(gset, design, plot=T)
+# OR weights by group
+# v <- voomaByGroup(gset, group=groups, design, plot=T, cex=0.1, pch=".", col=1:nlevels(gs))
+v$genes <- fData(gset) # attach gene annotations
+
+# fit linear model
+fit  <- lmFit(v)
+
+# set up contrasts of interest and recalculate model coefficients
+cts <- paste(groups[2], groups[1], sep="-")
+cont.matrix <- makeContrasts(contrasts=cts, levels=design)
+fit2 <- contrasts.fit(fit, cont.matrix)
+
+# compute statistics and table of top significant genes
+fit2 <- eBayes(fit2, 0.01)
+tT <- topTable(fit2, adjust="fdr", sort.by="B", number=Inf)
+
+tT <- subset(tT, select=c("ID","Gene.symbol","logFC","adj.P.Val"))
+
+
+# Filter unlabelled genes, duplicate genes
+GSE63127_CS_NS_GEO2R_limma_all <- tT %>%
+  filter(Gene.symbol!= "") %>% # Remove blank gene symbols
+  group_by(Gene.symbol) %>%
+  slice_min(adj.P.Val, with_ties = TRUE) %>% 
+  # For probesets mapping to same gene, keep one with lowest FDR. Keep ties for now to check later.
+  ungroup()
+
+# Filter for FDR < 0.05
+GSE63127_CS_NS_GEO2R_limma_sig <- GSE63127_CS_NS_GEO2R_limma_all %>%
+  filter(adj.P.Val <= 0.05) # Remove FDR > 0.05 genes
+
+# Checking for ties
+ties <- GSE63127_CS_NS_GEO2R_limma_sig %>%
+  group_by(Gene.symbol) %>%
+  filter(n() > 1) %>%
+  ungroup()
+print(ties)
+# No ties
+
+head(GSE63127_CS_NS_GEO2R_limma_sig)
+nrow(GSE63127_CS_NS_GEO2R_limma_sig)
+```
+
+## 1.5 Basic filtering of DEGs (unlabelled, duplicates, FDR < 0.05)
+```{r}
+
+# Now I want to filter unlabelled genes, duplicate genes, and adj.P.Val < 0.05
+GSE7895_CS_NS_GEO2R_limma_all <- tT %>%
+  filter(Gene.symbol != "") %>% # Remove blank gene symbols
+#  filter(adj.P.Val <= 0.05) %>% # Remove FDR > 0.05 genes
+  group_by(Gene.symbol) %>%
+  slice_min(adj.P.Val, with_ties = TRUE) %>% 
+  # For probesets mapping to same gene, keep one with lowest FDR. Keep ties for now to check later.
+  ungroup()
+head(GSE7895_CS_NS_GEO2R_limma_all)
+
+GSE7895_CS_NS_GEO2R_limma_sig <- GSE7895_CS_NS_GEO2R_limma_all %>%
+  filter(adj.P.Val <= 0.05) # Remove FDR > 0.05 genes
+head(GSE7895_CS_NS_GEO2R_limma_sig)
+
+# Checking for ties
+ties <- GSE7895_CS_NS_GEO2R_limma_sig %>%
+  group_by(Gene.symbol) %>%
+  filter(n() > 1) %>%
+  ungroup()
+print(ties)
+
+# The below script is from the first time I ran the script when there were ties, this time around there were no ties
+
+# The only gene with a tie is MUC5AC, with a log2FC of 2.42 versus 2.46.
+# One of the 2 probe IDs has an 'x' suffix.
+# See the description of suffixes at https://rmflight.github.io/affyMM/
+# Given this, I will decide to remove the one with the 'x' suffix.
+# GSE7895_CS_NS_GEO2R_limma_sig <- GSE7895_CS_NS_GEO2R_limma_sig %>%
+#   filter(ID != '214303_x_at')
+# head(GSE7895_CS_NS_GEO2R_limma_sig)
+
+nrow(GSE7895_CS_NS_GEO2R_limma_sig)
+
+```
+
+#####
+
+## 1.6 Save outputs
+```{r}
+
+# Change date suffix as appropriate if changes are made
+#write.table(GSE7895_CS_NS_GEO2R_limma_sig, "../2_Outputs/GSE7895_CS_NS_GEO2R_limma_sig_20241016.txt", sep = '\t')
+
+```
+
+
+# 2. Differential expression analysis of TCGA-LUAD tumor vs normal tissue (T-E)
+
+## 2.1 Loading dataset, formatting as tumor-normal pairs
+```{r}
+
+library(TCGAbiolinks)
+library(SummarizedExperiment)
+library(dplyr)
+
+query <- GDCquery(project = "TCGA-LUAD",
+                  data.category = "Transcriptome Profiling",
+                  data.type = "Gene Expression Quantification",
+                  sample.type = c("Primary Tumor", "Solid Tissue Normal"),
+                  workflow.type = "STAR - Counts")
+
+GDCdownload(query)
+
+data <- GDCprepare(query)
+
+counts <- as.data.frame(assay(data))  # Extracting the count matrix (these are supposedly raw counts)
+head(counts)  # Viewing the first few rows (genes) and columns (samples)
+
+gene_info <- as.data.frame(rowData(data))
+head(gene_info)  # Preview the first few genes and their annotations
+
+sample_info <- as.data.frame(colData(data))
+head(sample_info)  # Preview sample metadata
+
+table(sample_info$sample_type)  # Summarize sample types (Tumor vs. Normal)
+
+# Extract just the normal sample info
+sample_info_normal <- sample_info[sample_info$definition=="Solid Tissue Normal",]
+
+# Look for tumor samples with normal matches from same patients
+sample_info_tumor <- sample_info %>%
+  filter(patient %in% sample_info_normal$patient) %>%
+  filter(definition == "Primary solid Tumor")
+
+# The tumor list is longer -- check out duplicate patient IDs in this list
+sample_info_tumor_dups <- sample_info_tumor %>%
+  group_by(patient) %>%
+  filter(n() > 1) %>%
+  ungroup()
+
+unique(sample_info_tumor_dups$patient) # There are 6 patients with multiple tumor samples
+sample_info_tumor_dups_FFPE <- sample_info_tumor_dups[sample_info_tumor_dups$is_ffpe,] # OK the difference is the FFPE status.
+# It seems these are the only 6 patients in the group who have FFPE samples available.
+
+# I guess I will make the decision to keep the 6 FFPE samples regardless. Not sure if that's the right choice but I'll do it for now.
+
+# Get the non-FFPE duplicate patient sample info
+sample_info_tumor_dups_non_FFPE <- sample_info_tumor_dups[!sample_info_tumor_dups$is_ffpe,]
+# Remove these IDs from the main tumor sample info
+sample_info_tumor <- sample_info_tumor %>% filter(! barcode %in% sample_info_tumor_dups_non_FFPE$barcode)
+
+# There is 1 normal sample with no matching tumor sample it seems, so remove that
+sample_info_normal <- sample_info_normal %>% filter(patient != "TCGA-44-6144")
+
+# Make the matched tumor-normal sample table
+sample_info_matched_T_NM <- rbind(sample_info_tumor, sample_info_normal)[order(c(seq_len(nrow(sample_info_tumor)), seq_len(nrow(sample_info_normal)))), ]
+sample_info_matched_T_NM <- sample_info_matched_T_NM %>% dplyr::select(-treatments) # Removing treatments column since it is in the form of a list and has no info
+
+## Modifying the counts table for tumor-normal matched data ##
+
+# Keep the sample labels that are in the T-NM matched info
+sample_barcodes <- as.character(sample_info_matched_T_NM$barcode)
+counts_matched_T_NM <- counts %>%
+  dplyr::select(all_of(sample_barcodes))
+
+# Rename with sample label
+names(counts_matched_T_NM) <- sample_info_matched_T_NM$sample
+
+```
+
+## 2.2.1 Quality control checks
+```{r}
+
+library(dplyr)
+library(edgeR)
+
+# Checking distribution of the whole counts table
+hist(as.matrix(counts_matched_T_NM)) # whoa
+hist(log2(as.matrix(counts_matched_T_NM))) # Still not normal at all
+
+# Checking distribution of just tumor samples
+counts_matched_T <- counts_matched_T_NM %>%
+  dplyr::select(seq(1, ncol(counts_matched_T_NM), by = 2))
+hist(log2(as.matrix(counts_matched_T))) # Equally bad distribution, why is it the same though??
+
+# Checking distribution of just normal samples
+counts_matched_NM <- counts_matched_T_NM %>%
+  dplyr::select(seq(2, ncol(counts_matched_T_NM), by = 2))
+hist(log2(as.matrix(counts_matched_NM))) # Equally bad distribution, why is it the same though????
+
+
+boxplot(counts_matched_T_NM) # Boxplots for all counts looks crazy
+boxplot(counts_matched_T) # Boxplots for just tumors looks crazy
+boxplot(counts_matched_NM) # Boxplots for just normals looks crazy
+
+## PCA to check for tumor-normal separation
+colz <- as.numeric(as.factor(rep(c(0,1), length(counts_matched_T_NM)/2))) # Get color values from group
+plotMDS(counts_matched_T_NM,
+        gene.selection = "common",
+        main = "PCA for TCGA-LUAD expression",
+        col = colz,
+        pch = 1
+)
+# Separate but not very good separation, 1 definite outlier.
+# To find the outlier, plotting PCA with sample names
+plotMDS(counts_matched_T_NM,
+        gene.selection = "common",
+        main = "PCA for TCGA-LUAD expression",
+        col = colz
+        #pch = 1
+)
+
+# Checking out this outlier, TCGA-38-4626-01A
+hist(log2(counts_matched_T_NM$`TCGA-38-4626-01A`)) # Not obvious why it's an outlier, but must somehow be really normal-like?
+
+##  Making a dendrogram to see if the same outliers are found
+sample_dist <- dist(t(counts_matched_T_NM))  # Transpose the matrix to calculate distances between samples
+hc <- hclust(sample_dist) #Perform hierarchical clustering
+plot(hc, main = "Dendrogram of Samples", xlab = "", sub = "", cex = 0.8) # Plot the dendrogram
+
+```
+
+## 2.2.2 Acting on quality control checks
+```{r}
+# Remove the 1 most obvious outlier and its pair:
+# TCGA-38-4626-01A
+# TCGA-38-4626-11A
+
+counts_matched_T_NM <- counts_matched_T_NM %>% dplyr::select(-c("TCGA-38-4626-01A","TCGA-38-4626-11A"))
+
+# counts_matched_T_NM <- counts_matched_T_NM %>% dplyr::select(-c("TCGA.38.4626.01A","TCGA.38.4626.11A"))
+# Version after reading it in
+
+# The matrices have messy boxplots and histograms, but since I am using the signed-rank test, it does not suppose require normally distributed data, so I will just go with this raw counts matrix for now.
+
+```
+
+
+## 2.3 Differential expression analysis using signed-rank test, and filter to FDR < 0.05
+
+DGE/DEG analysis is based on a recent paper: Li et al. Genome Biology (2022) 23:79
+Source code: https://github.com/xihuimeijing/DEGs_Analysis_FDR/blob/main/scripts/DEGs.R
+Accessed 2023/08/26
+
+Tutorial: https://rpubs.com/LiYumei/806213
+Accessed 2023/08/31
+
+Unlike the tutorial, here I perform a signed-rank test rather than a rank-sum test, as the samples are not independent (they are matched tumor and normal samples).
+
+```{r}
+
+library(edgeR)
+
+# Make DGElist
+readCount <- counts_matched_T_NM
+conditions <- factor(matrix(c(rep(c(1,2),length(counts_matched_T_NM)/2)), ncol=1)) # Columns are alternating tumor-normal pairs
+y <- DGEList(counts=readCount,group=conditions)
+
+#Filter out genes with very low counts using the filterByExpr function (default)
+keep <- filterByExpr(y)
+y <- y[keep,,keep.lib.sizes=FALSE]
+
+#Perform TMM normalization and transfer to CPM (Counts Per Million)
+y <- calcNormFactors(y,method="TMM")
+count_norm=cpm(y)
+count_norm<-as.data.frame(count_norm)
+
+#Unlike the tutorial, here I specify "paired = TRUE" to ensure the test is a signed-rank test as opposed to a rank-sum test.
+pvalues <- sapply(1:nrow(count_norm),function(i){
+  data<-cbind.data.frame(gene=as.numeric(t(count_norm[i,])),conditions)
+  p=wilcox.test(gene~conditions, data, paired = TRUE,)$p.value
+  return(p)
+})
+
+#Return false discovery rate - corrected P-values
+fdr=p.adjust(pvalues,method = "fdr")
+
+#Calculate log fold change
+tumor_indexes = seq(1, ncol(count_norm), by = 2)
+normal_indexes = seq(2, ncol(count_norm), by = 2)
+
+tumor_values=count_norm[,tumor_indexes]
+normal_values=count_norm[,normal_indexes]
+foldChanges=log2(rowMeans(tumor_values, na.rm = TRUE)/rowMeans(normal_values, na.rm = TRUE))
+
+#Output results to a unified table!
+DGE_LUAD_T_NM_signed_rank <-data.frame(log2foldChange=foldChanges, pValues=pvalues, FDR=fdr)
+rownames(DGE_LUAD_T_NM_signed_rank)=rownames(count_norm)
+DGE_LUAD_T_NM_signed_rank=na.omit(DGE_LUAD_T_NM_signed_rank)
+
+# Keep the genes below FDR < 0.05
+fdrThres=0.05
+DGE_LUAD_T_NM_signed_rank_sig <- DGE_LUAD_T_NM_signed_rank[DGE_LUAD_T_NM_signed_rank$FDR<fdrThres,]
+
+nrow(DGE_LUAD_T_NM_signed_rank_sig) # 4757 (2024/10/16)
+# Note: Way lower than it was the first time I ran it?? Oh well, lower is good I guess.
+
+```
+
+
+
+
+## 2.4 Saving outputs
+```{r}
+# Change date suffix as appropriate if modifications are made
+write.table(DGE_LUAD_T_NM_signed_rank_sig, "../2_Outputs/DGE_LUAD_T_NM_signed_rank_sig_20241016.txt", sep = '\t')
+```
+
+#####
+
+# 3. Differential methylation analysis of TCGA-LUAD tumor vs normal tissue (T-E)
+
+## 3.1 Loading dataset
+```{r}
+library(dplyr)
+
+data_methylation_hm450_tumor <- read.table("../../Former_Smokers_Aim_2/1_TCGA_LUAD_multiomics/0_Unpaired_input_tables/data_methylation_hm450.txt", header=TRUE, fill=TRUE)
+
+data_methylation_hm450_normal <- read.table("../../Former_Smokers_Aim_2/1_TCGA_LUAD_multiomics/0_Unpaired_input_tables/data_methylation_hm450_normals.txt", header=TRUE, fill=TRUE)
+
+```
+
+I downloaded this level 3 methylation 450k data from cBioPortal, from TCGA Lung Adenocarcinoma (Firehose Legacy)
+https://www.cbioportal.org/study/summary?id=luad_tcga
+(Accessed 2023/08/29)
+Note that this provides gene information but not probe information
+
+## 3.2 Formatting dataset 
+
+### 3.2.1 Formatting counts in tumor-normal pairs
+```{r}
+
+allIDs_tumor <- colnames(data_methylation_hm450_tumor)
+allIDs_normal <- colnames(data_methylation_hm450_normal)
+
+#Listing IDs of tumors that have matched normals by changing the tissue ID to the "tumor" identifier, "01", for matching purposes.
+IDs_tumor_with_matches <-gsub(".11",".01", allIDs_normal)
+
+#Make a table of the methylation data for tumor samples only with matching normal data.
+#
+data_methylation_hm450_tumor_with_matches <- data_methylation_hm450_tumor %>%
+  dplyr::select(any_of(IDs_tumor_with_matches))
+
+#Make a table of the methylation data for normal samples only with matching tumor data.
+# Note that 3 of the normal samples don't have a matching tumor sample:
+#`TCGA.44.2655.01`, `TCGA.44.2659.01`, and `TCGA.44.2662.01` don't exist.
+data_methylation_hm450_normal_with_matches <- data_methylation_hm450_normal %>%
+  dplyr::select(-c('TCGA.44.2655.11', 'TCGA.44.2659.11','TCGA.44.2662.11'))
+
+#Make a combined table of matched tumor-normal samples.
+data_methylation_hm450_tumor_normal_matched <- cbind(data_methylation_hm450_tumor_with_matches, data_methylation_hm450_normal_with_matches)[order(c(1:31,1:31))]
+
+#Remove duplicate gene ID column and the entrez ID columns
+data_methylation_hm450_tumor_normal_matched <- data_methylation_hm450_tumor_normal_matched[,-c(1,3,4)]
+
+```
+
+### 3.2.2 Giving suffixes to duplicate genes
+```{r}
+# I want to make the gene names into row names, but I cannot because some gene names appear twice.
+# So, I will rename them with indexes _1 and _2 and figure out  why they appeared twice later.
+
+#Checking rows of the gene names with duplicates:
+checking_dups <- data_methylation_hm450_tumor_normal_matched[data_methylation_hm450_tumor_normal_matched$Hugo_Symbol.1 %in% c("AGER", "CX3CR1", "F2R", "GADL1", "GCOM1", "KLK10", "PALM2AKAP2", "QSOX1", "RCC1"),]
+
+# I see that these are not identical rows - the methylation values are different. So, I will go ahead and add indexes.
+checking_dups <- checking_dups[order(checking_dups$Hugo_Symbol.1),]#Sort by gene name
+
+checking_dups <- cbind(rownames(checking_dups), checking_dups[,1]) #Make table of just the gene names and row names of the original file
+
+checking_dups[,2] <- paste(checking_dups[,2],1:2,sep="_") # Add a suffix to the gene names
+
+#Replace the gene names in the T-NM matched file with the suffixed gene names, output to a new file.
+data_methylation_hm450_tumor_normal_matched[checking_dups[,1],1] <- checking_dups[,2]
+
+#Now that there are no longer duplicates, make the gene names column into the row names and remove the gene names column.
+rownames(data_methylation_hm450_tumor_normal_matched) <- data_methylation_hm450_tumor_normal_matched[,1]
+data_methylation_hm450_tumor_normal_matched <- data_methylation_hm450_tumor_normal_matched[,2:59]
+
+```
+
+## 3.3 Quality control checks
+```{r}
+
+hist(as.matrix(data_methylation_hm450_tumor[3:length(data_methylation_hm450_tumor)])) # Hmm very flat distribution
+max(data_methylation_hm450_tumor[3:length(data_methylation_hm450_tumor)]) #still NA values
+min(data_methylation_hm450_tumor[3:length(data_methylation_hm450_tumor)])
+boxplot(data_methylation_hm450_tumor[3:length(data_methylation_hm450_tumor)]) # egad looks bad
+
+hist(as.matrix(data_methylation_hm450_normal[3:length(data_methylation_hm450_normal)])) # Also weird and flat distribution
+boxplot(data_methylation_hm450_normal[3:length(data_methylation_hm450_normal)]) #kinda nice
+
+hist(as.matrix(data_methylation_hm450_tumor_normal_matched)) # Of course the same weird distribution
+boxplot(data_methylation_hm450_tumor_normal_matched) # kinda weird, means vary
+
+# This is definitely not a normal distribution, but the wilcoxon signed-rank test does not assume a normal distribution. However, maybe this could indicate an issue with the original files?
+
+```
+
+## 3.4 Differential analysis (filtering to FDR < 0.05)
+```{r}
+
+# Function to remove a tumor-normal pair if one of them has an NA value. (I credit assistance to chatGPT.) Used in the subsequent Wilcox signed-rank test.
+
+remove_NA_pairs <- function(my_data) {
+  valid_columns <- c()
+  # Iterate through columns in pairs
+  for (i in seq(1, ncol(my_data), by = 2)) {
+    tumor_col <- my_data[, i]
+    normal_col <- my_data[, i+1]
+    # Check for NAs in the pair of columns
+    if (!any(is.na(tumor_col)) && !any(is.na(normal_col))) {
+      valid_columns <- c(valid_columns, i, i+1)
+    }
+  }
+  # Subset the data frame using valid column indices
+  result_data <- my_data[, valid_columns]
+  return (result_data)
+}
+
+
+## Wilcoxon signed-rank test ##
+
+# Shorter name for convenience
+methyl_beta <- data_methylation_hm450_tumor_normal_matched
+
+#Run the Wilcoxon signed-rank test for each gene. 
+#Paired=TRUE specifies signed-rank, na.action=na.fail specifies that an error message will be thrown if NAs are still remaining after the filtering step.
+
+pvalues <- sapply(1:nrow(methyl_beta),function(i){
+     beta_values <- methyl_beta[i,]
+     
+     #Remove values from tumor-normal pairs if either of them is NA
+     beta_values <- remove_NA_pairs(beta_values)
+     
+     #Make group labels to differentiate tumor and normal
+     group <- rep(c(1,2),length(beta_values))
+     data<-cbind.data.frame(gene=as.numeric(t(beta_values)),group)
+     
+     p=wilcox.test(gene~group, data, paired = TRUE, na.action = na.fail)$p.value
+     return(p)
+   })
+
+#Note that if you use don't use the remove_NA_pairs filtering step, and you use na.action=na.pass, you also don't get any error messages, and it's possible that this also effectively skips over pairs with NAs. I just couldn't find a detailed explanation of how na.pass worked in this case, so I filtered first using my own remove_NA_pairs function.
+
+#Return false discovery rate-corrected P-values
+fdr=p.adjust(pvalues,method = "fdr")
+
+#Calculate log fold change
+tumor_indexes = seq(1, ncol(methyl_beta), by = 2)
+normal_indexes = seq(2, ncol(methyl_beta), by = 2)
+
+tumor_values=methyl_beta[,tumor_indexes]
+normal_values=methyl_beta[,normal_indexes]
+foldChanges=log2(rowMeans(tumor_values, na.rm = TRUE)/rowMeans(normal_values, na.rm = TRUE))
+
+#Output results to a unified table!
+DMeth_LUAD_T_NM_hm450 <-data.frame(log2foldChange=foldChanges, pValues=pvalues, FDR=fdr)
+rownames(DMeth_LUAD_T_NM_hm450)=rownames(methyl_beta)
+DMeth_LUAD_T_NM_hm450=na.omit(DMeth_LUAD_T_NM_hm450)
+
+
+# Keep the genes with FDR<0.05
+fdrThres=0.05
+DMeth_LUAD_T_NM_hm450_sig <- DMeth_LUAD_T_NM_hm450[DMeth_LUAD_T_NM_hm450$FDR<fdrThres,]
+
+nrow(DMeth_LUAD_T_NM_hm450_sig) # 9930 (2024/10/16)
+
+## I manually checked the genes with duplicate names that I had added a suffix to, and none of them were significant DEGs.
+##ISSUE: This was using gene names and not probe IDs. Could be good to start with a list that includes probe ID.
+```
+
+## 3.5 Saving outputs
+```{r}
+# Change date suffix as appropriate if modifications are made
+write.table(DMeth_LUAD_T_NM_hm450_sig, "../2_Outputs/DMeth_LUAD_T_NM_hm450_sig_20241016.txt", sep = '\t')
+```
+
+
+#####
+
+# 4. Comparing and filtering A1, T-E, and T-M to generate "linked genes" list
+
+## 4.1 Applying log2FC cutoffs
+```{r}
+
+### Testing log2FC cutoffs ###
+
+# A1 DEGs
+log2Thres=0.5
+nrow(GSE63127_CS_NS_GEO2R_limma_sig[abs(GSE63127_CS_NS_GEO2R_limma_sig$logFC)>log2Thres,]) ## 1103 seems ok
+
+# TCGA-LUAD DEGs [[TODO 2024/10/16]]
+log2Thres=2
+nrow(DGE_LUAD_T_NM_signed_rank_sig[abs(DGE_LUAD_T_NM_signed_rank_sig$log2foldChange)>log2Thres,]) 
+
+# TCGA-LUAD DMGs
+log2Thres=0.5
+nrow(DMeth_LUAD_T_NM_hm450_sig[abs(DMeth_LUAD_T_NM_hm450_sig$log2foldChange)>log2Thres,]) # 2025 seems reasonable
+
+
+
+## Below is unfinished ##
+
+
+# Filtering to the log2FC threshold of 2
+DGE_LUAD_T_NM_signed_rank_sig_cutoff2 <- DGE_LUAD_T_NM_signed_rank_sig[abs(DGE_LUAD_T_NM_signed_rank_sig$log2foldChange)>log2Thres,]
+
+##  Replace ensembl IDs with gene names
+
+# Filter gene info to the ensembl IDs we want to replace
+gene_info_DEGs <- gene_info %>%
+  filter(gene_id %in% rownames(DGE_LUAD_T_NM_signed_rank_sig_cutoff2))
+
+# Sort both lists by the ensembl ID
+gene_info_DEGs <- gene_info_DEGs %>% arrange(., gene_id)
+DGE_LUAD_T_NM_signed_rank_sig_cutoff2 <- DGE_LUAD_T_NM_signed_rank_sig_cutoff2 %>% arrange(., rownames(.))
+
+# Replace ensembl IDs with gene names in the DEGs list
+rownames(DGE_LUAD_T_NM_signed_rank_sig_cutoff2) <- gene_info_DEGs$gene_name
+
+
+### TCGA-LUAD DMGs ###
+
+
+
+```
+
+## 4.2 Filtering by dataset intersection
+```{r}
+
+
+
+```
+
+#####
+
+# 5. Differential expression analysis of reference reference "persistent" airway current vs former vs never smoker dataset (A2)
+
+## 5.1 Loading dataset
+```{r}
+
+```
+
+## 5.2 Formatting dataset
+```{r}
+
+```
+
+## 5.3 Quality control checks
+```{r}
+
+```
+
+## 5.4 Differential expression analysis
+```{r}
+
+```
+
+## 5.5 Basic filtering and FDR < 0.05 cutoff
+```{r}
+
+```
+
+#####
+
+# 6. Comparing and filtering A2 and "linked" genes from 4. to give "persistent linked genes"
+
+
+## 6.1 Applying log2FC cutoffs
+```{r}
+
+```
+
+## 6.2 Filtering by dataset intersection
+```{r}
+
+```
+
+#####
+
+## Saving files
+```{r}
+
+```
+
+

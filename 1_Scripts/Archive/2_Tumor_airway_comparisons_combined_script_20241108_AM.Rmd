@@ -8,10 +8,20 @@ date: "2024-10-11"
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-This script will include all steps in the main pipeline of my thesis project. This includes differential analysis of the reference airway Current vs never smoker dataset (A1, GSE63127), differential expression analysis of the TCGA-LUAD lung adenocarcinoma expression and methylation datasets, and the reference "persistent" airway current vs former vs never smoker dataset (A2, GSE7895). This includes all normalization, quality control, and filtering steps.
+This script will include all steps in the "main pipeline" part of my thesis project. This includes differential analysis of the reference airway Current vs never smoker dataset (A1, GSE63127), differential expression analysis of the TCGA-LUAD lung adenocarcinoma expression and methylation datasets, and the reference "persistent" airway current vs former vs never smoker dataset (A2, GSE7895). This includes all normalization, quality control, and filtering steps.
 
 Notes: 
 - I will opt to keep all genes with FDR < 0.05 until the step with filtering and dataset comparisons.
+
+# Loading libraries
+```{r}
+library(EnhancedVolcano, verbose = FALSE)
+library(GEOquery, verbose = FALSE)
+library(limma, verbose = FALSE)
+library(umap, verbose = FALSE)
+library(dplyr, verbose = FALSE)
+```
+
 
 # 1. Differential expression analysis of reference airway current vs never smoker dataset (A1, GSE63127)
 
@@ -21,10 +31,7 @@ Notes:
 # Version info: R 4.2.2, Biobase 2.58.0, GEOquery 2.66.0, limma 3.54.0
 ################################################################
 #   Differential expression analysis with limma
-library(GEOquery)
-library(limma)
-library(umap)
-library(dplyr)
+
 
 # load series and platform data from GEO (date: 2024/10/15)
 gset <- getGEO("GSE63127", GSEMatrix =TRUE, AnnotGPL=TRUE)
@@ -53,6 +60,7 @@ length(sml) # 182 samples
 ```
 
 ## 1.2 Quality control checks and normalization 
+2024/11/07: I am going to try doing this without the quantile normalization to see whether it's still okay
 ```{r}
 
 ## Make histograms and boxplots to check if the data is log-transformed and needs quantile normalization ##
@@ -60,22 +68,23 @@ hist(as.matrix(exprs(gset))) # skewed left, needs log2 transform
 boxplot(exprs(gset)) # scary-looking
 max(exprs(gset)) # 136808
 min(exprs(gset)) # 0.0657913
-# Should do both log2 and quantile normalization
+# Should do log2 and quantile normalization
 
 ## log2 and Quantile normalization ##
 exprs(gset) <- log2(exprs(gset)+1)
-exprs(gset) <- normalizeBetweenArrays(exprs(gset)) # quantile normalization
+##exprs(gset) <- normalizeBetweenArrays(exprs(gset)) # quantile normalization: no longer doing this
+
 
 hist(as.matrix(exprs(gset))) # much better
-boxplot(exprs(gset)) # All identical
-min(exprs(gset)) # 0.3185814
-max(exprs(gset)) # 16.17398
+boxplot(exprs(gset)) # Look reasonable
+min(exprs(gset)) 
+max(exprs(gset)) 
 
 ```
 
 ## 1.3 Checking and correcting batch effect / sources of variation
 
-## 1.3.1: Download and clean up the phenotypic information table from the dataset
+### 1.3.1: Download and clean up the phenotypic information table from the dataset
 ```{r}
 # assign samples to groups and set up design matrix
 gs <- factor(sml)
@@ -256,7 +265,7 @@ phenotypic_data <- phenotypic_data %>%
 ```
 
 
-## 1.3.2: Plot PCA and use phenotypic information to look for sources of batch effect/variation, and correct for these with ComBat
+### 1.3.2: Plot PCA and use phenotypic information to look for sources of batch effect/variation, and correct for these with ComBat
 ```{r}
 
 # assign samples to groups and set up design matrix
@@ -375,79 +384,101 @@ tT <- topTable(fit2, adjust="fdr", sort.by="B", number=Inf)
 
 tT <- subset(tT, select=c("ID","Gene.symbol","logFC","adj.P.Val"))
 
-
-# Filter unlabelled genes, duplicate genes
-GSE63127_CS_NS_GEO2R_limma_all <- tT %>%
-  filter(Gene.symbol!= "") %>% # Remove blank gene symbols
-  group_by(Gene.symbol) %>%
-  slice_min(adj.P.Val, with_ties = TRUE) %>% 
-  # For probesets mapping to same gene, keep one with lowest FDR. Keep ties for now to check later.
-  ungroup()
-
-# Filter for FDR < 0.05
-GSE63127_CS_NS_GEO2R_limma_sig <- GSE63127_CS_NS_GEO2R_limma_all %>%
-  filter(adj.P.Val <= 0.05) # Remove FDR > 0.05 genes
-
-# Checking for ties
-ties <- GSE63127_CS_NS_GEO2R_limma_sig %>%
-  group_by(Gene.symbol) %>%
-  filter(n() > 1) %>%
-  ungroup()
-print(ties)
-# No ties
-
-head(GSE63127_CS_NS_GEO2R_limma_sig)
-nrow(GSE63127_CS_NS_GEO2R_limma_sig)
 ```
 
 ## 1.5 Basic filtering of DEGs (unlabelled, duplicates, FDR < 0.05)
 ```{r}
 
 # Now I want to filter unlabelled genes, duplicate genes, and adj.P.Val < 0.05
-GSE7895_CS_NS_GEO2R_limma_all <- tT %>%
+GSE63127_CS_NS_GEO2R_limma_all <- tT %>%
   filter(Gene.symbol != "") %>% # Remove blank gene symbols
 #  filter(adj.P.Val <= 0.05) %>% # Remove FDR > 0.05 genes
   group_by(Gene.symbol) %>%
   slice_min(adj.P.Val, with_ties = TRUE) %>% 
   # For probesets mapping to same gene, keep one with lowest FDR. Keep ties for now to check later.
   ungroup()
-head(GSE7895_CS_NS_GEO2R_limma_all)
+head(GSE63127_CS_NS_GEO2R_limma_all)
 
-GSE7895_CS_NS_GEO2R_limma_sig <- GSE7895_CS_NS_GEO2R_limma_all %>%
+GSE63127_CS_NS_GEO2R_limma_sig <- GSE63127_CS_NS_GEO2R_limma_all %>%
   filter(adj.P.Val <= 0.05) # Remove FDR > 0.05 genes
-head(GSE7895_CS_NS_GEO2R_limma_sig)
+head(GSE63127_CS_NS_GEO2R_limma_sig)
 
 # Checking for ties
-ties <- GSE7895_CS_NS_GEO2R_limma_sig %>%
+ties <- GSE63127_CS_NS_GEO2R_limma_sig %>%
   group_by(Gene.symbol) %>%
   filter(n() > 1) %>%
   ungroup()
-print(ties)
+print(ties) # No ties
 
-# The below script is from the first time I ran the script when there were ties, this time around there were no ties
-
-# The only gene with a tie is MUC5AC, with a log2FC of 2.42 versus 2.46.
-# One of the 2 probe IDs has an 'x' suffix.
-# See the description of suffixes at https://rmflight.github.io/affyMM/
-# Given this, I will decide to remove the one with the 'x' suffix.
-# GSE7895_CS_NS_GEO2R_limma_sig <- GSE7895_CS_NS_GEO2R_limma_sig %>%
-#   filter(ID != '214303_x_at')
-# head(GSE7895_CS_NS_GEO2R_limma_sig)
-
-nrow(GSE7895_CS_NS_GEO2R_limma_sig)
+nrow(GSE63127_CS_NS_GEO2R_limma_sig)
 
 ```
 
-#####
+## 1.8 Visualization of DEGs (volcano plot)
+```{r}
 
-## 1.6 Save outputs
+log2FC_cutoff1 <- 0.5
+
+v1 <- EnhancedVolcano::EnhancedVolcano(
+  toptable = GSE63127_CS_NS_GEO2R_limma_all,
+  lab = GSE63127_CS_NS_GEO2R_limma_all$Gene.symbol,
+  x = "logFC", # "mean difference" is estimate here
+  y = "adj.P.Val", 
+ # pCutoffCol = 'min_smoothed_fdr',
+  xlab = "log2FC",
+  ylab = "-log10(FDR)",
+  title = "A1 DEGs",
+  subtitle = paste0("log2FC cutoff: ", log2FC_cutoff1),
+  caption = paste0("Total = ", nrow(GSE63127_CS_NS_GEO2R_limma_sig[abs(GSE63127_CS_NS_GEO2R_limma_sig$logFC)>log2FC_cutoff1,]), " significant DEGs above log2FC cutoff"),
+  col = c("grey30", "mediumpurple2", "royalblue", "orange2"),
+  legendPosition = "bottom",
+  labSize = 4,
+  max.overlaps = 5,
+  drawConnectors = TRUE,
+  arrowheads = FALSE,
+  pCutoff = 0.05,
+  FCcutoff = log2FC_cutoff1,
+  gridlines.minor = FALSE,
+  gridlines.major = FALSE,
+  xlim = c(-3, 6)
+)
+
+v1
+```
+
+
+## 1.7 Save outputs
 ```{r}
 
 # Change date suffix as appropriate if changes are made
-write.table(GSE7895_CS_NS_GEO2R_limma_sig, "../2_Outputs/GSE7895_CS_NS_GEO2R_limma_sig_20241016.txt", sep = '\t')
+#write.table(GSE63127_CS_NS_GEO2R_limma_sig, "../2_Outputs/GSE63127_CS_NS_GEO2R_limma_sig_20241107.txt", sep = '\t')
 
 ```
 
+## 1.8 Extra checks
+2024/11/07: Comparing the DEGs list when quantile normalization is used vs not used:
+```{r}
+GSE63127_CS_NS_GEO2R_limma_sig_quantile <- read.table("../2_Outputs/GSE63127_CS_NS_GEO2R_limma_sig_20241016.txt", header = TRUE)
+GSE63127_CS_NS_GEO2R_limma_sig_no_quantile <- GSE63127_CS_NS_GEO2R_limma_sig
+
+# Compare results
+library(VennDiagram)
+venn <- venn.diagram(
+  list(
+    DEGs_no_quantile = GSE63127_CS_NS_GEO2R_limma_sig_no_quantile$Gene.symbol,
+    DEGs_quantile = GSE63127_CS_NS_GEO2R_limma_sig_quantile$Gene.symbol
+  ),
+  filename = NULL
+)
+# Display the diagram
+grid.newpage()
+grid.draw(venn)
+
+```
+The lists agree quite well. The list without quantile normalization is larger. Quantile normalization could be over-normalization and mask some variation. The PCA plots still look good without quantile normalization. I will elect to go forward without quantile normalization. I will have to apply the same to all the other airway datasets for the meta-analysis bit.
+
+
+##########
 
 # 2. Differential expression analysis of TCGA-LUAD tumor vs normal tissue (T-E)
 
@@ -509,18 +540,20 @@ sample_info_normal <- sample_info_normal %>% filter(patient != "TCGA-44-6144")
 
 # Make the matched tumor-normal sample table
 sample_info_matched_T_NM <- rbind(sample_info_tumor, sample_info_normal)[order(c(seq_len(nrow(sample_info_tumor)), seq_len(nrow(sample_info_normal)))), ]
-sample_info_matched_T_NM <- sample_info_matched_T_NM %>% dplyr::select(-treatments) # Removing treatments column since it is in the form of a list and has no info
+sample_info_matched_T_NM <- sample_info_matched_T_NM %>% 
+  dplyr::select(-treatments) %>% # Removing treatments column since it is in the form of a list and has no info
+  arrange(., sample_type_id) %>% # First sort by tumor vs normal
+  arrange(., patient) # arrange by patient to get the tumor normal pairs
 
 ## Modifying the counts table for tumor-normal matched data ##
 
-# Keep the sample labels that are in the T-NM matched info
+# Keep the counts columns of sample labels that are in the T-NM matched info
 sample_barcodes <- as.character(sample_info_matched_T_NM$barcode)
 counts_matched_T_NM <- counts %>%
   dplyr::select(all_of(sample_barcodes))
 
-# Rename with sample label
+# Rename with sample label instead of sample barcode
 names(counts_matched_T_NM) <- sample_info_matched_T_NM$sample
-
 
 ```
 
@@ -546,8 +579,8 @@ hist(log2(as.matrix(counts_matched_NM))) # Equally bad distribution, why is it t
 
 
 boxplot(counts_matched_T_NM) # Boxplots for all counts looks crazy
-boxplot(counts_matched_T) # Boxplots for just tumors looks crazy
-boxplot(counts_matched_NM) # Boxplots for just normals looks crazy
+# boxplot(counts_matched_T) # Boxplots for just tumors looks crazy
+# boxplot(counts_matched_NM) # Boxplots for just normals looks crazy
 
 ## PCA to check for tumor-normal separation
 colz <- as.numeric(as.factor(rep(c(0,1), length(counts_matched_T_NM)/2))) # Get color values from group
@@ -579,20 +612,38 @@ plot(hc, main = "Dendrogram of Samples", xlab = "", sub = "", cex = 0.8) # Plot 
 ## 2.2.2 Acting on quality control checks
 ```{r}
 # Remove the 1 most obvious outlier and its pair:
-# TCGA-38-4626-01A
-# TCGA-38-4626-11A
+
+# TCGA-38-4626-01A, TCGA-38-4626-11A
 
 counts_matched_T_NM <- counts_matched_T_NM %>% dplyr::select(-c("TCGA-38-4626-01A","TCGA-38-4626-11A"))
 
 # counts_matched_T_NM <- counts_matched_T_NM %>% dplyr::select(-c("TCGA.38.4626.01A","TCGA.38.4626.11A"))
 # Version after reading it in
 
-# The matrices have messy boxplots and histograms, but since I am using the signed-rank test, it does not suppose normally distributed data, so I will just go with this raw counts matrix for now.
+## PCA to check for tumor-normal separation with outlier removed
+colz2 <- as.numeric(as.factor(rep(c(0,1), length(counts_matched_T_NM)/2))) # Get color values from group
+plotMDS(counts_matched_T_NM,
+        gene.selection = "common",
+        main = "PCA for TCGA-LUAD expression after outlier removal",
+        col = colz2,
+        pch = 1
+)
 
 ```
 
+The matrices have messy boxplots and histograms, but since I am using the signed-rank test, it does not suppose require normally distributed data, so I have decided to go with this raw counts matrix for now.
 
-## 2.3 Differential expression analysis, and filter to FDR < 0.05
+## 2.3 Differential expression analysis using signed-rank test, and filter to FDR < 0.05
+
+DGE/DEG analysis is based on a recent paper: Li et al. Genome Biology (2022) 23:79
+Source code: https://github.com/xihuimeijing/DEGs_Analysis_FDR/blob/main/scripts/DEGs.R
+Accessed 2023/08/26
+
+Tutorial: https://rpubs.com/LiYumei/806213
+Accessed 2023/08/31
+
+Unlike the tutorial, here I perform a signed-rank test rather than a rank-sum test, as the samples are not independent (they are matched tumor and normal samples).
+
 ```{r}
 
 library(edgeR)
@@ -634,38 +685,90 @@ DGE_LUAD_T_NM_signed_rank <-data.frame(log2foldChange=foldChanges, pValues=pvalu
 rownames(DGE_LUAD_T_NM_signed_rank)=rownames(count_norm)
 DGE_LUAD_T_NM_signed_rank=na.omit(DGE_LUAD_T_NM_signed_rank)
 
-# Keep the genes below FDR < 0.05
+
+### Replace ensembl IDs with gene names
+# Filter gene info to the ensembl IDs we want to replace
+gene_info_DEGs <- gene_info %>%
+  filter(gene_id %in% rownames(DGE_LUAD_T_NM_signed_rank))
+
+# Sort both lists by the ensembl ID
+gene_info_DEGs <- gene_info_DEGs %>% arrange(., gene_id)
+DGE_LUAD_T_NM_signed_rank<- DGE_LUAD_T_NM_signed_rank %>% arrange(., rownames(.))
+
+# Add gene names to the DEGs list, remove the rownames
+DGE_LUAD_T_NM_signed_rank$Gene <- gene_info_DEGs$gene_name
+rownames(DGE_LUAD_T_NM_signed_rank) <- NULL
+
+
+### Filter to genes below FDR < 0.05 ###
 fdrThres=0.05
 DGE_LUAD_T_NM_signed_rank_sig <- DGE_LUAD_T_NM_signed_rank[DGE_LUAD_T_NM_signed_rank$FDR<fdrThres,]
 
-nrow(DGE_LUAD_T_NM_signed_rank_sig) # 4757 (2024/10/16)
-# Note: Way lower than it was the first time I ran it?? Oh well, lower is good I guess.
+nrow(DGE_LUAD_T_NM_signed_rank_sig) # 13465 (2024/11/07)
 
 ```
 
-DGE analysis is based on a recent paper: Li et al. Genome Biology (2022) 23:79
-Source code: https://github.com/xihuimeijing/DEGs_Analysis_FDR/blob/main/scripts/DEGs.R
-Accessed 2023/08/26
+## 2.5 Visualization of DEGs (volcano plot)
+```{r}
+log2FC_cutoff2 <- 2
 
-Tutorial: https://rpubs.com/LiYumei/806213
-Accessed 2023/08/31
+v2 <- EnhancedVolcano::EnhancedVolcano(
+  toptable = DGE_LUAD_T_NM_signed_rank,
+  lab = DGE_LUAD_T_NM_signed_rank$Gene,
+  x = "log2foldChange",
+  y = "FDR", 
+ # pCutoffCol = 'min_smoothed_fdr',
+  xlab = "log2FC",
+  ylab = "-log10(FDR)",
+  title = "TE DEGs",
+  subtitle = paste0("log2FC cutoff: ", log2FC_cutoff2),
+  caption = paste0("Total = ", nrow(DGE_LUAD_T_NM_signed_rank_sig[abs(DGE_LUAD_T_NM_signed_rank_sig$log2foldChange)>log2FC_cutoff2,]), " significant DEGs above log2FC cutoff"),
+  col = c("grey30", "mediumpurple2", "royalblue", "orange2"),
+  legendPosition = "bottom",
+  labSize = 3,
+  max.overlaps = 10,
+  drawConnectors = TRUE,
+  arrowheads = FALSE,
+  pCutoff = 0.05,
+  FCcutoff = log2FC_cutoff2,
+  gridlines.minor = FALSE,
+  gridlines.major = FALSE,
+  #xlim = c(-3, 6)
+  ylim = c(0,10)
+)
 
-Unlike the tutorial, here I perform a signed-rank test rather than a rank-sum test, as the samples are not independent (they are matched tumor and normal samples).
+v2
+```
 
 
-## 2.4 Saving outputs
+## 2.6 Extra checks
+```{r}
+## Checking the distribution of log2FC values to think about cutoffs
+
+hist(DGE_LUAD_T_NM_signed_rank_sig$log2foldChange, breaks = 20) # Looks like a cutoff of 1 would remove a lot
+log2FC_cutoff <- 2
+nrow(DGE_LUAD_T_NM_signed_rank_sig[abs(DGE_LUAD_T_NM_signed_rank_sig$log2foldChange)>log2FC_cutoff,])
+
+```
+
+## 2.5 Saving outputs
 ```{r}
 # Change date suffix as appropriate if modifications are made
-write.table(DGE_LUAD_T_NM_signed_rank_sig, "../2_Outputs/DGE_LUAD_T_NM_signed_rank_sig_20241016.txt", sep = '\t')
+#write.table(DGE_LUAD_T_NM_signed_rank_sig, "../2_Outputs/DGE_LUAD_T_NM_signed_rank_sig_20241107.txt", sep = '\t')
 ```
 
 #####
 
 # 3. Differential methylation analysis of TCGA-LUAD tumor vs normal tissue (T-E)
 
+I downloaded this level 3 methylation 450k data from cBioPortal, from TCGA Lung Adenocarcinoma (Firehose Legacy)
+https://www.cbioportal.org/study/summary?id=luad_tcga
+(Accessed 2023/08/29)
+Note that this provides gene information but not probe information.
+I did a lot of work trying to do the analysis starting from probe level information, but ultimately decided to stick with this.
+
 ## 3.1 Loading dataset
 ```{r}
-library(dplyr)
 
 data_methylation_hm450_tumor <- read.table("../../Former_Smokers_Aim_2/1_TCGA_LUAD_multiomics/0_Unpaired_input_tables/data_methylation_hm450.txt", header=TRUE, fill=TRUE)
 
@@ -673,10 +776,6 @@ data_methylation_hm450_normal <- read.table("../../Former_Smokers_Aim_2/1_TCGA_L
 
 ```
 
-I downloaded this level 3 methylation 450k data from cBioPortal, from TCGA Lung Adenocarcinoma (Firehose Legacy)
-https://www.cbioportal.org/study/summary?id=luad_tcga
-(Accessed 2023/08/29)
-Note that this provides gene information but not probe information
 
 ## 3.2 Formatting dataset 
 
@@ -723,7 +822,7 @@ checking_dups <- cbind(rownames(checking_dups), checking_dups[,1]) #Make table o
 
 checking_dups[,2] <- paste(checking_dups[,2],1:2,sep="_") # Add a suffix to the gene names
 
-#Replace the gene names in the T-NM matched file with the suffixed gene names, output to a new file.
+#Replace the gene names in the T-NM matched file with the suffixed gene names
 data_methylation_hm450_tumor_normal_matched[checking_dups[,1],1] <- checking_dups[,2]
 
 #Now that there are no longer duplicates, make the gene names column into the row names and remove the gene names column.
@@ -735,25 +834,37 @@ data_methylation_hm450_tumor_normal_matched <- data_methylation_hm450_tumor_norm
 ## 3.3 Quality control checks
 ```{r}
 
-hist(as.matrix(data_methylation_hm450_tumor[3:length(data_methylation_hm450_tumor)])) # Hmm very flat distribution
-max(data_methylation_hm450_tumor[3:length(data_methylation_hm450_tumor)]) #still NA values
+hist(as.matrix(data_methylation_hm450_tumor[3:length(data_methylation_hm450_tumor)]))
+max(data_methylation_hm450_tumor[3:length(data_methylation_hm450_tumor)])
 min(data_methylation_hm450_tumor[3:length(data_methylation_hm450_tumor)])
-boxplot(data_methylation_hm450_tumor[3:length(data_methylation_hm450_tumor)]) # egad looks bad
+boxplot(data_methylation_hm450_tumor[3:length(data_methylation_hm450_tumor)])
 
-hist(as.matrix(data_methylation_hm450_normal[3:length(data_methylation_hm450_normal)])) # Also weird and flat distribution
-boxplot(data_methylation_hm450_normal[3:length(data_methylation_hm450_normal)]) #kinda nice
+hist(as.matrix(data_methylation_hm450_normal[3:length(data_methylation_hm450_normal)]))
+boxplot(data_methylation_hm450_normal[3:length(data_methylation_hm450_normal)])
 
-hist(as.matrix(data_methylation_hm450_tumor_normal_matched)) # Of course the same weird distribution
-boxplot(data_methylation_hm450_tumor_normal_matched) # kinda weird, means vary
+hist(as.matrix(data_methylation_hm450_tumor_normal_matched))
+boxplot(data_methylation_hm450_tumor_normal_matched)
 
 # This is definitely not a normal distribution, but the wilcoxon signed-rank test does not assume a normal distribution. However, maybe this could indicate an issue with the original files?
 
 ```
 
-## 3.4 Differential analysis (filtering to FDR < 0.05)
+## 3.4 Preprocessing (Conversion to M values)
 ```{r}
 
-# Function to remove a tumor-normal pair if one of them has an NA value. (I credit assistance to chatGPT.) Used in the subsequent Wilcox signed-rank test.
+# Shorter name for convenience
+methyl_beta <- data_methylation_hm450_tumor_normal_matched
+
+# Convert to M values
+methyl_M=log2(methyl_beta/(1-methyl_beta))
+
+```
+
+
+## 3.5 Differential analysis and filtering to FDR < 0.05
+```{r}
+
+# Function to remove a tumor-normal pair if one of them has an NA value. Used in the subsequent Wilcox signed-rank test.
 
 remove_NA_pairs <- function(my_data) {
   valid_columns <- c()
@@ -772,23 +883,20 @@ remove_NA_pairs <- function(my_data) {
 }
 
 
-## Wilcoxon signed-rank test ##
-
-# Shorter name for convenience
-methyl_beta <- data_methylation_hm450_tumor_normal_matched
+### Wilcoxon signed-rank test ###
 
 #Run the Wilcoxon signed-rank test for each gene. 
 #Paired=TRUE specifies signed-rank, na.action=na.fail specifies that an error message will be thrown if NAs are still remaining after the filtering step.
 
-pvalues <- sapply(1:nrow(methyl_beta),function(i){
-     beta_values <- methyl_beta[i,]
+pvalues <- sapply(1:nrow(methyl_M),function(i){
+     M_values <- methyl_M[i,]
      
      #Remove values from tumor-normal pairs if either of them is NA
-     beta_values <- remove_NA_pairs(beta_values)
+     M_values <- remove_NA_pairs(M_values)
      
      #Make group labels to differentiate tumor and normal
-     group <- rep(c(1,2),length(beta_values))
-     data<-cbind.data.frame(gene=as.numeric(t(beta_values)),group)
+     group <- rep(c(1,2),length(M_values))
+     data<-cbind.data.frame(gene=as.numeric(t(M_values)),group)
      
      p=wilcox.test(gene~group, data, paired = TRUE, na.action = na.fail)$p.value
      return(p)
@@ -799,40 +907,98 @@ pvalues <- sapply(1:nrow(methyl_beta),function(i){
 #Return false discovery rate-corrected P-values
 fdr=p.adjust(pvalues,method = "fdr")
 
-#Calculate log fold change
-tumor_indexes = seq(1, ncol(methyl_beta), by = 2)
-normal_indexes = seq(2, ncol(methyl_beta), by = 2)
+#Calculate log2 fold change
+tumor_indexes = seq(1, ncol(methyl_M), by = 2)
+normal_indexes = seq(2, ncol(methyl_M), by = 2)
 
 tumor_values=methyl_beta[,tumor_indexes]
 normal_values=methyl_beta[,normal_indexes]
 foldChanges=log2(rowMeans(tumor_values, na.rm = TRUE)/rowMeans(normal_values, na.rm = TRUE))
 
-#Output results to a unified table!
+# Output results to a unified table!
 DMeth_LUAD_T_NM_hm450 <-data.frame(log2foldChange=foldChanges, pValues=pvalues, FDR=fdr)
-rownames(DMeth_LUAD_T_NM_hm450)=rownames(methyl_beta)
-DMeth_LUAD_T_NM_hm450=na.omit(DMeth_LUAD_T_NM_hm450)
+DMeth_LUAD_T_NM_hm450$Gene <- rownames(methyl_beta)
+rownames(DMeth_LUAD_T_NM_hm450) <- NULL
+DMeth_LUAD_T_NM_hm450=na.omit(DMeth_LUAD_T_NM_hm450) # Remove any NAs
 
+# Check on the duplicated genes, make list of the pairs that had higher FDR values for removal
+library(stringr)
+DMeth_LUAD_T_NM_hm450_dups_to_rm <- DMeth_LUAD_T_NM_hm450 %>%
+  filter(str_detect(Gene, "_")) %>%# Filter to the genes I added a _1 or _2 suffix to
+  arrange(., Gene) %>% # Sort by gene name
+  mutate(pair_id = rep(1:(n() / 2), each = 2)) %>% # Add a pair ID column
+  group_by(., pair_id) %>%
+  filter(FDR==max(FDR)) %>% # Get the maximum FDR values of the pairs
+  ungroup()
+
+# Remove the less significant duplicate genes 
+DMeth_LUAD_T_NM_hm450 <- DMeth_LUAD_T_NM_hm450 %>%
+  filter(!(Gene %in% DMeth_LUAD_T_NM_hm450_dups_to_rm$Gene))
+
+#Remove the "_n" suffixes from the remaining genes of the pair
+DMeth_LUAD_T_NM_hm450 <- DMeth_LUAD_T_NM_hm450 %>%
+  mutate(Gene = str_remove(Gene, "_.*"))
 
 # Keep the genes with FDR<0.05
 fdrThres=0.05
 DMeth_LUAD_T_NM_hm450_sig <- DMeth_LUAD_T_NM_hm450[DMeth_LUAD_T_NM_hm450$FDR<fdrThres,]
 
-nrow(DMeth_LUAD_T_NM_hm450_sig) # 9930 (2024/10/16)
+nrow(DMeth_LUAD_T_NM_hm450_sig) # 9868 (2024/11/08 PM)
 
-## I manually checked the genes with duplicate names that I had added a suffix to, and none of them were significant DEGs.
-##ISSUE: This was using gene names and not probe IDs. Could be good to start with a list that includes probe ID.
 ```
 
-## 3.5 Saving outputs
+## 3.6 Saving outputs
 ```{r}
 # Change date suffix as appropriate if modifications are made
-write.table(DMeth_LUAD_T_NM_hm450_sig, "../2_Outputs/DMeth_LUAD_T_NM_hm450_sig_20241016.txt", sep = '\t')
+write.table(DMeth_LUAD_T_NM_hm450_sig, "../2_Outputs/DMeth_LUAD_T_NM_hm450_sig_20241108_PM.txt", sep = '\t')
 ```
 
+## 3.7 Visualizing DMGs as volcano plot
+```{r}
+
+log2FC_cutoff3 <- 1
+
+v3 <- EnhancedVolcano::EnhancedVolcano(
+  toptable = DMeth_LUAD_T_NM_hm450,
+  lab = DMeth_LUAD_T_NM_hm450$Gene,
+  x = "log2foldChange",
+  y = "FDR", 
+ # pCutoffCol = 'min_smoothed_fdr',
+  xlab = "log2FC",
+  ylab = "-log10(FDR)",
+  title = "TM DMGs",
+  subtitle = paste0("log2FC cutoff: ", log2FC_cutoff3),
+  caption = paste0("Total = ", nrow(DMeth_LUAD_T_NM_hm450_sig[abs(DMeth_LUAD_T_NM_hm450_sig$log2foldChange)>log2FC_cutoff3,]), " significant DEGs above log2FC cutoff"),
+  col = c("grey30", "mediumpurple2", "royalblue", "orange2"),
+  legendPosition = "bottom",
+  labSize = 3,
+  max.overlaps = 10,
+  drawConnectors = TRUE,
+  arrowheads = FALSE,
+  pCutoff = 0.05,
+  FCcutoff = log2FC_cutoff3,
+  gridlines.minor = FALSE,
+  gridlines.major = FALSE,
+  xlim = c(-2, 4),
+  ylim = c(0,10)
+)
+
+v3
+
+```
+
+## 3.8 Extra checks
+
+```{r}
+
+
+
+
+```
 
 #####
 
-# 4. Comparing and filtering A1, T-E, and T-M to generate "linked genes" list
+# 4. Comparing and filtering A1, TE, and TM to generate "linked genes" list
 
 ## 4.1 Applying log2FC cutoffs
 ```{r}
@@ -840,51 +1006,107 @@ write.table(DMeth_LUAD_T_NM_hm450_sig, "../2_Outputs/DMeth_LUAD_T_NM_hm450_sig_2
 ### Testing log2FC cutoffs ###
 
 # A1 DEGs
-log2Thres=0.5
-nrow(GSE63127_CS_NS_GEO2R_limma_sig[abs(GSE63127_CS_NS_GEO2R_limma_sig$logFC)>log2Thres,]) ## 1103 seems ok
+log2Thres_A1=0.5
+nrow(GSE63127_CS_NS_GEO2R_limma_sig[abs(GSE63127_CS_NS_GEO2R_limma_sig$logFC)>log2Thres_A1,])
 
-# TCGA-LUAD DEGs [[TODO 2024/10/16]]
-log2Thres=2
-nrow(DGE_LUAD_T_NM_signed_rank_sig[abs(DGE_LUAD_T_NM_signed_rank_sig$log2foldChange)>log2Thres,]) 
+# TCGA-LUAD DEGs
+log2Thres_TE=1
+nrow(DGE_LUAD_T_NM_signed_rank_sig[abs(DGE_LUAD_T_NM_signed_rank_sig$log2foldChange)>log2Thres_TE,])
 
 # TCGA-LUAD DMGs
-log2Thres=0.5
-nrow(DMeth_LUAD_T_NM_hm450_sig[abs(DMeth_LUAD_T_NM_hm450_sig$log2foldChange)>log2Thres,]) # 2025 seems reasonable
+log2Thres_TM=0.5
+nrow(DMeth_LUAD_T_NM_hm450_sig[abs(DMeth_LUAD_T_NM_hm450_sig$log2foldChange)>log2Thres_TM,])
+
+## Notes on results after filtering:
+# 0, 0, 0 => 950 genes
+# 0.2, 1, 0.3 => 143 genes
+# 0.5, 2, 0.5 => 14 genes
+# 0.5, 1, 0.5 => 26 genes (but still good correlation across board unlike with other options)
 
 
+### Applying log2FC cutoffs and formatting consistently for merge ###
 
-## Below is unfinished ##
+GSE63127_CS_NS_GEO2R_limma_sig_cutoff <- GSE63127_CS_NS_GEO2R_limma_sig %>%
+  filter(abs(logFC)>log2Thres_A1) %>%
+  dplyr::rename(Gene = Gene.symbol, FDR_A1 = adj.P.Val, log2FC_A1 = logFC) %>%
+  dplyr::select(., Gene, FDR_A1, log2FC_A1)
 
+DGE_LUAD_T_NM_signed_rank_sig_cutoff <- DGE_LUAD_T_NM_signed_rank_sig %>%
+  filter(abs(log2foldChange)>log2Thres_TE) %>%
+  dplyr::rename(., FDR_TE = FDR, log2FC_TE = log2foldChange) %>%
+  dplyr::select(., Gene, FDR_TE, log2FC_TE)
 
-# Filtering to the log2FC threshold of 2
-DGE_LUAD_T_NM_signed_rank_sig_cutoff2 <- DGE_LUAD_T_NM_signed_rank_sig[abs(DGE_LUAD_T_NM_signed_rank_sig$log2foldChange)>log2Thres,]
-
-##  Replace ensembl IDs with gene names
-
-# Filter gene info to the ensembl IDs we want to replace
-gene_info_DEGs <- gene_info %>%
-  filter(gene_id %in% rownames(DGE_LUAD_T_NM_signed_rank_sig_cutoff2))
-
-# Sort both lists by the ensembl ID
-gene_info_DEGs <- gene_info_DEGs %>% arrange(., gene_id)
-DGE_LUAD_T_NM_signed_rank_sig_cutoff2 <- DGE_LUAD_T_NM_signed_rank_sig_cutoff2 %>% arrange(., rownames(.))
-
-# Replace ensembl IDs with gene names in the DEGs list
-rownames(DGE_LUAD_T_NM_signed_rank_sig_cutoff2) <- gene_info_DEGs$gene_name
-
-
-### TCGA-LUAD DMGs ###
-
+DMeth_LUAD_T_NM_hm450_sig_cutoff <- DMeth_LUAD_T_NM_hm450_sig %>%
+  filter(abs(log2foldChange)>log2Thres_TM) %>%
+  dplyr::rename(., FDR_TM = FDR, log2FC_TM = log2foldChange) %>%
+  dplyr::select(., Gene, FDR_TM, log2FC_TM)
 
 
 ```
 
 ## 4.2 Filtering by dataset intersection
+
+### 4.2.1 Intersection of A1 and TE DEGs
 ```{r}
-
-
+## Merge the lists
+A1_TE_merged_DEGs <- GSE63127_CS_NS_GEO2R_limma_sig_cutoff %>%
+  inner_join(., DGE_LUAD_T_NM_signed_rank_sig_cutoff, by = "Gene") %>%
+  filter(sign(log2FC_A1)==sign(log2FC_TE)) # Filter to genes with same signs
+  
+nrow(A1_TE_merged_DEGs)
 
 ```
+
+### 4.2.2 Intersection of A1/TE DEGs with TM DMGs
+```{r}
+## Merge the lists
+A1_TE_TM_merged_DEGs_DMGs <- A1_TE_merged_DEGs %>%
+  inner_join(., DMeth_LUAD_T_NM_hm450_sig_cutoff, by = "Gene") %>%
+  filter(sign(log2FC_A1)!=sign(log2FC_TM)) # Filter to genes with opposite sign
+  
+nrow(A1_TE_TM_merged_DEGs_DMGs)
+
+```
+
+Note: Maybe this should incorporate a Spearman correlation filter? But for this I would need to pair samples across the tumor datasets I think, at the expression/M value level. So you can get an idea of the broader correlation with the log2FC values but to apply it more broadly you need the initial tables instead.
+
+### 4.2.3 Visualizing Spearman correlations of log2FC values
+```{r}
+## Visualizing Spearman correlations
+library(GGally)
+ggpairs(A1_TE_TM_merged_DEGs_DMGs[, c("log2FC_A1", "log2FC_TE", "log2FC_TM")],
+  upper = list(continuous = wrap("cor", method = "spearman")),
+  lower = list(continuous = "points", combo = "facethist", discrete = "facetbar", na ="na"),
+  diag = list(continuous = "densityDiag", discrete = "barDiag", na = "naDiag"))
+
+```
+
+### 4.2.4 Visualizing multiple linear regression of the log2FC values
+```{r}
+mlr_airway_model <- lm(log2FC_A1 ~ log2FC_TE + log2FC_TM, data = A1_TE_TM_merged_DEGs_DMGs)
+summary(mlr_airway_model)
+
+
+library(scatterplot3d)
+s3d <- scatterplot3d(x = A1_TE_TM_merged_DEGs_DMGs$log2FC_A1, 
+              y = A1_TE_TM_merged_DEGs_DMGs$log2FC_TE, 
+              z = A1_TE_TM_merged_DEGs_DMGs$log2FC_TM,
+              main="Plotting airway expression vs. tumor expression vs. tumor methylation",
+              xlab = "log2FC(TE)",
+              ylab = "log2FC(TM)",
+              zlab = "log2FC(A1)",
+              pch = 19,
+              #color = colors_3d, # getting color values from methylation sign
+              color = "steelblue",
+              labels = A1_TE_TM_merged_DEGs_DMGs$Gene,
+              type = "h",
+              #highlight.3d = TRUE, 
+              angle = 60
+              )
+s3d$plane3d(mlr_airway_model) # Add a plane based on the multiple linear regression model
+
+```
+
 
 #####
 
@@ -892,33 +1114,337 @@ rownames(DGE_LUAD_T_NM_signed_rank_sig_cutoff2) <- gene_info_DEGs$gene_name
 
 ## 5.1 Loading dataset
 ```{r}
+# load series and platform data from GEO
+
+gset <- getGEO("GSE7895", GSEMatrix =TRUE, AnnotGPL=TRUE)
+if (length(gset) > 1) idx <- grep("GPL96", attr(gset, "names")) else idx <- 1
+gset <- gset[[idx]]
+
+# make proper column names to match toptable 
+fvarLabels(gset) <- make.names(fvarLabels(gset))
+
+# group membership for all samples
+gsms <- paste0("22222222222222222222200000000000000000000000000000",
+               "00000000000000000000000111111111111111111111111111",
+               "1111")
+sml <- strsplit(gsms, split="")[[1]]
+
+gset <- gset[complete.cases(exprs(gset)), ] # skip missing values
+
+# assign samples to groups and set up design matrix
+gs <- factor(sml)
+groups <- make.names(c("current_smoker","former_smoker","never_smoker"))
+levels(gs) <- groups
+gset$group <- gs
+design <- model.matrix(~group + 0, gset)
+colnames(design) <- levels(gs)
+
+gset <- gset[complete.cases(exprs(gset)), ] # skip missing values
 
 ```
 
-## 5.2 Formatting dataset
+## 5.2 Quality control checks
+
+### 5.2.1 Initial checks (histogram, boxplot, PCA)
 ```{r}
 
+## Make histograms and boxplots to check if the data is log-transformed and needs quantile normalization ##
+
+hist(as.matrix(exprs(gset))) # Values range 1-15, and 1 big peak around 3. 
+boxplot(exprs(gset)) # Same range of values, with similar-looking ranges, but not exactly the same
+# Narrow range, therefore no log2 normalization needed
+
+#exprs(gset) <- normalizeBetweenArrays(exprs(gset)) # electing not to do quantile normalization for now
+
+min(exprs(gset))
+max(exprs(gset))
+
+## Plot PCA ##
+colz <- as.numeric(as.factor(gs)) # Get color values from group
+plotMDS(exprs(gset),
+        gene.selection = "common",
+        main = "PCA for GSE7895",
+        col = colz,
+        pch = 1
+        #labels = gs
+        )
+
+legend("topright", legend = levels(as.factor(gs)), 
+       fill = unique(colz), 
+       title = "Smoking status")
+# No separation, all mixed up. This isn't a good look.
 ```
 
-## 5.3 Quality control checks
+### 5.2.2 Investigating source of variation
+#### Extract and format phenotypic data
+```{r}
+library(stringr)
+
+phenotypic_data <- pData(gset)  # Extract phenotypic data
+
+# List of column names I want to keep and clean up into usable labels
+columns_to_find <- c("characteristics_ch1.1", "group")
+
+# Get the column indexes
+indexes <- sapply(columns_to_find, function(col_name) which(names(phenotypic_data) == col_name))
+indexes <- unlist(indexes)
+
+phenotypic_data <- phenotypic_data[,c(indexes)]
+
+# Extract Age
+phenotypic_data$age <- as.numeric(str_extract(phenotypic_data$characteristics_ch1.1, "(?<=Age:)\\d+"))
+
+# Extract Packyears
+phenotypic_data$packyears <- as.numeric(str_extract(phenotypic_data$characteristics_ch1.1, "(?<=Packyears:)\\d+"))
+
+# Extract Time Since Quit Smoking (months)
+phenotypic_data$TSQ_months <- as.numeric(str_extract(phenotypic_data$characteristics_ch1.1, "(?<=Time Since Quit Smoking \\(months\\):)\\d+"))
+
+# Delete the original column with the unseparated info
+phenotypic_data <- phenotypic_data[,-1]
+
+# Convert the NA values for packyears for never smokers to zero (this makes sense since the never smokers have 0 pack years)
+phenotypic_data$packyears[phenotypic_data$group=="never_smoker"] <- 0
+
+# Convert the NA values for TSQ_months to zero for current smokers (again makes sense)
+phenotypic_data$TSQ_months[phenotypic_data$group=="current_smoker"] <- 0
+
+# Make column to denote just former smoking status for the linear model
+phenotypic_data$former_smoking_status <- as.factor(as.numeric(phenotypic_data$group == "former_smoker"))
+
+# Make column to denote just current smoking status for the linear model
+phenotypic_data$current_smoking_status <- as.factor(as.numeric(phenotypic_data$group == "current_smoker"))
+
+# Make column to denote just never smoking status for the linear model
+phenotypic_data$never_smoking_status <- as.factor(as.numeric(phenotypic_data$group == "never_smoker"))
+
+```
+
+#### 5.2.3 Plot PCA using other phenotypic data
 ```{r}
 
+
+## Plot PCA using age to define color
+# Create a gradient color palette (light blue to dark blue)
+palette <- colorRampPalette(c("lightblue", "darkblue"))
+
+## Plot PCA of age ##
+colz_age <- palette(length(phenotypic_data$age))[rank(phenotypic_data$age)]  # Map ages to gradient colors
+plotMDS(exprs(gset),
+        gene.selection = "common",
+        main = "PCA for GSE7895 (darker blue ~ higher age)",
+        col = colz_age,
+        pch = 1
+        )
+# Add a color bar for age
+legend("topright", legend = range(phenotypic_data$age), 
+       fill = palette(2), 
+       title = "Age")
+# Does not seem to be an age effect
+
+
+
+
+### Plot PCA of packyears ###
+
+# Excluding packyears of zero (never smokers)
+pheno_packyears <- phenotypic_data[phenotypic_data$packyears!=0,]
+exprs_packyears <- as.data.frame(exprs(gset)) %>%
+  dplyr::select(rownames(pheno_packyears))
+
+colz_packyears <-  palette(length(pheno_packyears$packyears))[rank(pheno_packyears$packyears)] # Map packyears to gradient colors
+plotMDS(exprs_packyears,
+        gene.selection = "common",
+        main = "PCA for GSE7895 (darker blue ~ higher packyears)",
+        col = colz_packyears,
+        pch = 1
+        #labels = gs
+        )
+# Add a color bar for packyears
+legend("topright", legend = range(pheno_packyears$packyears), 
+       fill = palette(2), 
+       title = "Packyears")
+## Does not seem to be packyears effect
+
+
+### Plot PCA of time since quitting ###
+pheno_tsq <- phenotypic_data[!is.na(phenotypic_data$TSQ_months),]
+exprs_tsq <- as.data.frame(exprs(gset)) %>%
+  dplyr::select(rownames(pheno_tsq))
+
+colz_TSQ <- palette(length(pheno_tsq$TSQ))[rank(pheno_tsq$TSQ)]  # Map packyears to gradient colors
+plotMDS(exprs_tsq,
+        gene.selection = "common",
+        main = "PCA for GSE7895 (darker blue ~ more time since quitting)",
+        col = colz_TSQ,
+        pch = 1
+        #labels = gs
+        )
+legend("topright", legend = range(pheno_tsq$TSQ), 
+       fill = palette(2), 
+       title = "TSQ")
+## Does not seem to be TSQ effect
+
+
 ```
 
-## 5.4 Differential expression analysis
+This is potentially problematic, but I propose that if the genes determined to be "persistent" can differentiate between the groups as expected in PCA, it will be evidence that the results are valid despite the groups not being differentiated by all the genes taken as a whole.
+
+Note that I began trying to do this analysis accounting for pack years and TSQ (see other script), but for now I am just looking at the smoking status comparisons alone.
+
+## 5.3 Differential expression analysis
 ```{r}
 
+v <- vooma(gset, design, plot=T)
+v$genes <- fData(gset) # attach gene annotations
+
+
+# fit linear model
+fit  <- lmFit(v)
+
+# set up contrasts of interest and recalculate model coefficients
+#cts <- c(paste(groups[1],"-",groups[2],sep=""), paste(groups[1],"-",groups[3],sep=""), paste(groups[2],"-",groups[3],sep=""))
+#cont.matrix <- makeContrasts(contrasts=cts, levels=design)
+cont.matrix <- makeContrasts(
+  CS_vs_NS = current_smoker - never_smoker,
+  FS_vs_NS = former_smoker - never_smoker,
+  CS_vs_FS = current_smoker - former_smoker,
+  levels = design
+)
+
+fit2 <- contrasts.fit(fit, cont.matrix)
+
+
+# compute statistics and table of top significant genes
+fit2 <- eBayes(fit2, proportion = 0.01) # Proportion is "assumed proportion of genes which are differentially expressed"
+
+
 ```
 
-## 5.5 Basic filtering and FDR < 0.05 cutoff
+## 5.4 Select "persistent" DEGs, and basic filter (keep lower FDR of duplicates, apply FDR < 0.05 cutoff)
+```{r}
+library(dplyr)
+library(VennDiagram)
+
+## Separate out genes that are DEGS in CS vs NS and FS vs NS
+
+## Note: I have decided not to filter out genes that are significantly different between CS and FS because I realized that doesn't make logical sense.
+
+# summarize test results as "up", "down" or "not expressed"
+dT <- decideTests(fit2, adjust.method="fdr", p.value=0.05, lfc=0)
+
+# Venn diagram of results
+vennDiagram(dT)
+
+# Select the genes differentially expressed in both CS_vs_NS and FS_vs_NS
+dT_persistent <- dT %>%
+  as.data.frame(.) %>%
+  filter(CS_vs_NS != 0) %>% # Differentially expressed in CS vs NS
+  filter(CS_vs_NS == FS_vs_NS)# Differentially expressed, same sign in CS vs FS
+nrow(dT_persistent) # 128 genes indeed
+
+# Get the toptable format for all genes
+tT <- topTable(fit2, adjust="fdr", sort.by="B", number=Inf) # Inf shows all the significant genes
+
+# Filter to the "persistent" genes
+tT_persistent <- tT %>%
+  filter(ID %in% rownames(dT_persistent))
+
+# Filter out blanks, keep lower FDR of ties
+tT_persistent <- tT_persistent %>%
+  filter(Gene.symbol != "") %>% # Remove blank gene symbols
+  filter(adj.P.Val <= 0.05) %>% # Remove FDR > 0.05 genes
+  group_by(Gene.symbol) %>%
+  slice_min(adj.P.Val, with_ties = TRUE) %>% 
+  # For probesets mapping to same gene, keep one with lowest FDR. Keep ties for now to check later.
+  ungroup()
+nrow(tT_persistent)
+
+# Checking for ties
+ties <- tT_persistent%>%
+  group_by(Gene.symbol) %>%
+  filter(n() > 1) %>%
+  ungroup()
+print(ties) # None
+
+#Pick the columns we care about
+GSE7895_persistent <- tT_persistent[,c("ID", "Gene.symbol", "CS_vs_NS", "FS_vs_NS", "CS_vs_FS", "adj.P.Val")]
+
+```
+
+2024/11/12: There are only 77 genes here when I got 116 the first time I ran it. The only difference was quantile normalization, so I should test whether that did it.
+
+For now though, I want to check whether these genes now stratify the groups.
+
+## 5.5 Extra checks (PCA for stratification)
 ```{r}
 
+## Filter exprs to the "persistent" genes
+exprs_persistent <- as.data.frame(exprs(gset)) %>%
+  filter(rownames(.) %in% tT_persistent$ID)
+
+## Plot PCA ##
+colz<- as.numeric(as.factor(gs)) # Get color values from group
+plotMDS(exprs_persistent,
+        gene.selection = "common",
+        main = "PCA for GSE7895 with persistent genes",
+        col = colz,
+        pch = 1
+        #labels = gs
+        )
+
+legend("topright", legend = levels(as.factor(gs)), 
+       fill = unique(colz), 
+       title = "Smoking status")
+
+# You can see more separation happening, but I would expect to see current and former smokers more mixed together, whereas we see former and never smokers more mixed together. Hmm okay, interesting at least.
+
+# Might be good to check on the packyears and TSQ here as well?
+
+### Plot PCA of packyears ###
+
+# Excluding packyears of zero (never smokers)
+exprs_persistent_packyears <- as.data.frame(exprs_persistent) %>%
+  dplyr::select(rownames(pheno_packyears))
+
+colz_packyears <-  palette(length(pheno_packyears$packyears))[rank(pheno_packyears$packyears)] # Map packyears to gradient colors
+plotMDS(exprs_persistent_packyears,
+        gene.selection = "common",
+        main = "PCA for GSE7895 persistent genes (darker blue ~ higher packyears)",
+        col = colz_packyears,
+        pch = 16
+        #labels = gs
+        )
+# Add a color bar for packyears
+legend("bottomleft", legend = range(pheno_packyears$packyears), 
+       fill = palette(2), 
+       title = "Packyears")
+## Maybe some sort of packyears effect happening, not obviously so
+
+
+### Plot PCA of time since quitting ###
+exprs_persistent_tsq <- as.data.frame(exprs_persistent) %>%
+  dplyr::select(rownames(pheno_tsq))
+
+colz_TSQ <- palette(length(pheno_tsq$TSQ))[rank(pheno_tsq$TSQ)]  # Map packyears to gradient colors
+plotMDS(exprs_persistent_tsq ,
+        gene.selection = "common",
+        main = "PCA for GSE7895 persistent genes (darker blue ~ more months since quitting)",
+        col = colz_TSQ,
+        pch = 16
+        #labels = gs
+        )
+legend("bottomleft", legend = range(pheno_tsq$TSQ), 
+       fill = palette(2), 
+       title = "TSQ")
+## Maybe some TSQ effect but not super obvious
+
 ```
+
 
 #####
 
 # 6. Comparing and filtering A2 and "linked" genes from 4. to give "persistent linked genes"
-
 
 ## 6.1 Applying log2FC cutoffs
 ```{r}
