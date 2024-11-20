@@ -587,7 +587,6 @@ ggplot(expr_long, aes(x = Group, y = Expression, fill = Group)) +
 library(ggplot2)
 library(tidyr)
 
-
 ## Put the dataframes in a list
 df_list_goi <- list(GSE4302 = GSE4302_CS_NS_expr_matrix_genes_of_interest, GSE7895 = GSE7895_CS_NS_expr_matrix_genes_of_interest, GSE19027 = GSE19027_CS_NS_expr_matrix_genes_of_interest, GSE20257 = GSE20257_CS_NS_expr_matrix_genes_of_interest, GSE63127 = GSE63127_CS_NS_expr_matrix_genes_of_interest)
 
@@ -598,10 +597,11 @@ current_smoker_indexes <- list(GSE4302_csi = GSE4302_current_smoker_indexes, GSE
 never_smoker_indexes <- list(GSE4302_nsi = GSE4302_never_smoker_indexes, GSE7895_nsi = GSE7895_never_smoker_indexes, GSE19027_nsi = GSE19027_never_smoker_indexes, GSE20257_nsi = GSE20257_never_smoker_indexes, GSE63127_nsi = GSE63127_never_smoker_indexes)
 
 # Set current gene of interest (make a loop eventually)
-i<-3
+i<-2
+curr_gene <- genes_of_interest[i]
 
 # Set current dataset index of interest (make loop eventually)
-j<-4
+j<-1
 
 # Subset data for current smokers and never smokers
 df_curr <- as.data.frame(df_list_goi[j])
@@ -610,32 +610,34 @@ colnames(df_curr) <- sub(".*\\.", "", colnames(df_curr))
 csi_curr <- unlist(current_smoker_indexes[j])
 nsi_curr <- unlist(never_smoker_indexes[j])
 
-curr_gene <- genes_of_interest[i]
-expr_curr_gene <- df_curr[df_curr$gene==curr_gene,]
-expr_curr_gene <- expr_curr_gene[,-1]
-
-expr_current_smokers_curr_gene <- expr_curr_gene[,csi_curr]
-expr_never_smokers_curr_gene <- expr_curr_gene[,nsi_curr]
-
-# Combine into a long format dataframe
-expr_long <- data.frame(
-  Gene = curr_gene,
-  current_smokers = as.vector(expr_current_smokers_curr_gene),
-  never_smokers   = as.vector(expr_never_smokers_curr_gene)
-) %>%
-  pivot_longer(cols = -Gene, names_to = "Group", values_to = "Expression")
-
-expr_long$Group <- sub("\\..*", "", expr_long$Group) # Remove the sample ID info
-
-# Plot using ggplot2
-ggplot(expr_long, aes(x = Group, y = Expression, fill = Group)) +
-  geom_boxplot() +
-  facet_wrap(~ Gene, scales = "free_y") +  # One boxplot per gene
-  theme_minimal() +
-  labs(title = paste0(names(df_list_goi[j]),": Current Smokers vs Never Smokers for ", curr_gene),
-       x = "Group", y = "Expression") +
-  theme(legend.position = "none")
-
+if(curr_gene %in% df_curr$gene){
+  expr_curr_gene <- df_curr[df_curr$gene==curr_gene,]
+  expr_curr_gene <- expr_curr_gene[,-1]
+  
+  expr_current_smokers_curr_gene <- expr_curr_gene[,csi_curr]
+  expr_never_smokers_curr_gene <- expr_curr_gene[,nsi_curr]
+  
+  # Combine into a long format dataframe
+  expr_long <- data.frame(
+    Gene = curr_gene,
+    current_smokers = as.vector(expr_current_smokers_curr_gene),
+    never_smokers   = as.vector(expr_never_smokers_curr_gene)
+  ) %>%
+    pivot_longer(cols = -Gene, names_to = "Group", values_to = "Expression")
+  
+  expr_long$Group <- sub("\\..*", "", expr_long$Group) # Remove the sample ID info
+  
+  # Plot using ggplot2
+  ggplot(expr_long, aes(x = Group, y = Expression, fill = Group)) +
+    geom_boxplot() +
+    facet_wrap(~ Gene, scales = "free_y") +  # One boxplot per gene
+    theme_minimal() +
+    labs(title = paste0(names(df_list_goi[j]), " ", curr_gene, ": Current vs Never Smokers expression"),
+         x = "Group", y = "Expression") +
+    theme(legend.position = "none")
+} else{
+  print(paste0("Gene ", curr_gene, " not in the dataset ", names(df_list_goi[j])))
+}
 
 ```
 
