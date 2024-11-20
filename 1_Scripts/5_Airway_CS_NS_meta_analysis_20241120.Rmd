@@ -688,7 +688,9 @@ for (i in 1:length(genes_of_interest)){
         legend.title = element_blank(),  # Remove legend title
         legend.position = "right",  # Move the legend to the right side
         legend.key = element_rect(fill = "white", color = "white"),  # Make the legend boxes white with black border
-        axis.text.x = element_blank()  # Remove x-axis labels
+        axis.text.x = element_blank(),  # Remove x-axis labels
+        # panel.grid.major.x = element_blank(),  # Remove major gridlines
+        panel.grid.minor = element_blank()   # Remove minor gridlines
        )
     print(boxplot)
 }
