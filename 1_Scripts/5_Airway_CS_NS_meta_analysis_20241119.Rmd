@@ -436,5 +436,41 @@ head(persistent_linked_CS_NS_SMD_summary_overall)
 
 ```
 
+## Forest plots
+
+```{r, fig.width = 12, fig.height = 8}
+
+for (i in 1:nrow(gene_list)){
+
+  # i <- 3 # Change i to change the gene, or make a loop to check all the genes
+  
+  df_SMD_input <- CS_NS_SMD_input_template # Make a new dataframe for data to input into SMD
+    
+  for (j in 1:length(dataframe_list)){ # For each dataframe in the list of dataframes
+    df <- dataframe_list[[j]] # Extract dataframe j
+    df_gene_j <- df[df$Gene==gene_list[i,]$Gene,]
+    df_gene_j <- df_gene_j %>%
+      semi_join(GSE_probeset_gene_for_join, by = c("GEO_ID", "Gene", "ID")) # Filtering to probesets of interest from DEGs
+    # Append the row with the gene of interest to the SMD input dataframe
+    df_SMD_input <- rbind(df_SMD_input, df_gene_j)
+  }
+    
+  # Input the resulting df into the SMD calculation function
+  df_SMD_values <- metacont(Current_smoker_count, Current_smoker_mean, Current_smoker_SD, Never_smoker_count, Never_smoker_mean, Never_smoker_SD, sm="SMD", data = df_SMD_input, studlab = GEO_ID)
+      
+  # Make a forest plot of the results if the P value is less than 0.05
+  if (!is.na(df_SMD_values$pval.Q) && df_SMD_values$pval.Q < 0.05){
+    df_SMD_forest <- forest(df_SMD_values, smlab = paste0(gene_list$Gene[i], " SMD forest plot"))
+  }
+  
+  # Assign a label with the name of the gene to the plot
+  # file_name <- paste0(gene_list[i], "_SMD_forest")
+  # assign(file_name, df_SMD_forest)
+
+}
+
+```
+
+
 
 
