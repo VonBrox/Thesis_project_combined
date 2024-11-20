@@ -655,21 +655,25 @@ for (i in 1:length(genes_of_interest)){
       
       expr_long$Group <- sub("\\..*", "", expr_long$Group) # Remove the sample ID info
       
-      # Plot using ggplot2
-      boxplot<-ggplot(expr_long, aes(x = Group, y = Expression, fill = Group)) +
-        geom_boxplot() +
-        #facet_wrap(~ Gene, scales = "free_y") +  # One boxplot per gene
-        theme_minimal() +
-        scale_y_continuous(
-          #limits = c(0,14), 
-           minor_breaks = NULL) + 
-        labs(title = paste0(names(df_list_goi[j]), " ", curr_gene, ": Current vs Never Smokers expression"),
-             x = "Group", y = "Expression") +
-        theme(legend.position = "none")
-      print(boxplot)
+      # Store the processed data
+      combined_data_curr_gene[[j]] <- expr_long
+      
     } else{
       print(paste0("Gene ", curr_gene, " not in the dataset ", names(df_list_goi[j])))
     }
+    
+    # Plot using ggplot2
+    boxplot<-ggplot(expr_long, aes(x = Group, y = Expression, fill = Group)) +
+      geom_boxplot() +
+      #facet_wrap(~ Gene, scales = "free_y") +  # One boxplot per gene
+      theme_minimal() +
+      scale_y_continuous(
+      #limits = c(0,14), 
+      minor_breaks = NULL) + 
+      labs(title = paste0(names(df_list_goi[j]), " ", curr_gene, ": Current vs Never Smokers expression"),
+             x = "Group", y = "Expression") +
+      theme(legend.position = "none")
+      print(boxplot)
   }
 }
 ```
