@@ -43,7 +43,7 @@ head(clinical_data)
 
 ```
 
-According to this TCGA publication:
+According to this publication:
 https://pmc.ncbi.nlm.nih.gov/articles/PMC7427766/
 
 Regarding tobacco_smoking_history:
@@ -131,6 +131,6 @@ for (gene in genes_of_interest){
 
 ```
 
-Nice, the next thing to do would be to check if these 3 genes (CCDC81, SERPINB5, S100P) which predict survival in former smokers, also just predict survival in lung cancer or cancer in general. If they do, it might diminish the relevance of the finding, or it might back it up, depending on how you look at it...
+Nice, the next thing to do could be to check if these 3 genes (CCDC81, SERPINB5, S100P) which predict survival in former smokers, also just predict survival in lung cancer or cancer in general. If they do, it might diminish the relevance of the finding, or it might back it up, depending on how you look at it...
 
 
