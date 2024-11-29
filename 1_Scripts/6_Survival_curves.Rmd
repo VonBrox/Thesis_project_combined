@@ -191,5 +191,7 @@ for (gene in genes_of_interest){
 
 Now SERPINB5 is <0.0001, FAM189A2 is 0.0046, EFEMP1 is 0.049, CA12 is 0.017. But CCDC81 and S100P not significant. Interesting(?)
 
+Another thing that could be interesting to look at is whether the expression level correlates with time since quitting or pack-years.
 
+Note that I chatgpt'd the heck out of this so I should see online whether there are any quality control things I should do first.
 
