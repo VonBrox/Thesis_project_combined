@@ -110,8 +110,8 @@ for (gene in genes_of_interest){
   high_threshold <- quantile(t(gene_of_interest_FS_expression_values), 0.75)
   
   # Group assignment
-  former_smokers$group <- ifelse(t(gene_of_interest_FS_expression_values) <= low_threshold, "Low",
-                          ifelse(t(gene_of_interest_FS_expression_values) >= high_threshold, "High", NA))
+  former_smokers$group <- ifelse(t(gene_of_interest_FS_expression_values) <= low_threshold, "Low_25%",
+                          ifelse(t(gene_of_interest_FS_expression_values) >= high_threshold, "High_25%", NA))
   
   former_smokers_high_low_goi <- former_smokers[!is.na(former_smokers$group),]
   
@@ -123,14 +123,73 @@ for (gene in genes_of_interest){
   fit <- survfit(surv_object ~ group, data = former_smokers_high_low_goi)
   
   # Plot survival curves
-  ggsp <- ggsurvplot(fit, data = former_smokers_high_low_goi, pval = TRUE, title = gene_of_interest)
+  ggsp <- ggsurvplot(fit, data = former_smokers_high_low_goi, pval = TRUE, title = paste0("Former smokers ", gene_of_interest))
   print(ggsp)
 }
 
-## Significant genes found: CCDC81, SERPINB5, S100P
+## Significant genes found: CCDC81 (0.037), SERPINB5 (0.033), S100P (0.048)
 
 ```
 
-Nice, the next thing to do could be to check if these 3 genes (CCDC81, SERPINB5, S100P) which predict survival in former smokers, also just predict survival in lung cancer or cancer in general. If they do, it might diminish the relevance of the finding, or it might back it up, depending on how you look at it...
+Nice, the next thing to do could be to check if these 3 genes (CCDC81, SERPINB5, S100P), which predict survival in LUAD former smokers, also just predict survival in lung cancer or cancer in general. If they do, it might diminish the relevance of the finding, or it might back it up, depending on how you look at it...
+
+I want to check the same thing but with all the patients, not just the former smokers, just as a comparison.
+
+
+## Survival analysis: Comparing all LUADs with high and low expression of individual genes of interest ("persistent linked genes")
+```{r}
+library(survival)
+library(survminer)
+
+# Replace the sample barcodes with patient IDs (Note: maybe check more carefully that this worked properly later)
+colnames(counts) <- sample_info$patient
+
+# Clean data
+all_LUAD <- clinical_data[!is.na(clinical_data$bcr_patient_barcode),]
+
+all_LUAD <- all_LUAD %>%
+  filter(!(bcr_patient_barcode %in% c("TCGA-05-4245", "TCGA-44-2664", "TCGA-67-3776", "TCGA-MP-A4T2", "TCGA-44-A47F"))) 
+         # Removing some values because they are not in the counts data
+
+# Testing with particular genes of interest
+genes_of_interest <- A1_TE_TM_A2_persistent_linked_genes$Gene
+
+for (gene in genes_of_interest){
+  
+  gene_of_interest <- gene
+  ID_of_interest <- gene_info[gene_info$gene_name == gene_of_interest,]$gene_id
+  
+  # Select the former smoker expression levels of this gene
+  gene_of_interest_expression_values <- counts %>%
+    select(all_LUAD$bcr_patient_barcode) %>%
+    filter(rownames(.) %in% ID_of_interest)
+    
+  
+  # Quantile thresholds
+  low_threshold <- quantile(t(gene_of_interest_expression_values), 0.25)
+  high_threshold <- quantile(t(gene_of_interest_expression_values), 0.75)
+  
+  # Group assignment
+  all_LUAD$group <- ifelse(t(gene_of_interest_expression_values) <= low_threshold, "Low_25%",
+                          ifelse(t(gene_of_interest_expression_values) >= high_threshold, "High_25%", NA))
+  
+  all_LUAD_high_low_goi <- all_LUAD[!is.na(all_LUAD$group),]
+  
+  # Survival object
+  surv_object <- Surv(time = all_LUAD_high_low_goi$days_to_death, 
+                      event = !is.na(all_LUAD_high_low_goi$days_to_death))
+  
+  # Kaplan-Meier fit
+  fit <- survfit(surv_object ~ group, data = all_LUAD_high_low_goi)
+  
+  # Plot survival curves
+  ggsp <- ggsurvplot(fit, data = all_LUAD_high_low_goi, pval = TRUE, title = paste0("all LUAD ", gene_of_interest))
+  print(ggsp)
+}
+
+```
+
+Now SERPINB5 is <0.0001, FAM189A2 is 0.0046, EFEMP1 is 0.049, CA12 is 0.017. But CCDC81 and S100P not significant. Interesting(?)
+
 
 
