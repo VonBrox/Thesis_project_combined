@@ -483,7 +483,7 @@ for (i in 1:nrow(gene_list)){
 # So I want to have separate dataframes for the 5 GEO IDs, containing a column for the gene name, the expression data, and the group membership information.
 
 
-# Make a list of the genes of interest for the boxplots
+# Make a list of the genes of interest (persistent linked genes with significant cumulative SMD) for the boxplots
 genes_of_interest <- c("CA12", "CCDC81", "CTNNAL1", "EFEMP1", "LMO2", "TNS1")
 
 ### GSE4302 ###
