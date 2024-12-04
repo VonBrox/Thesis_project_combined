@@ -1,0 +1,433 @@
+---
+title: "5_Airway_CS_NS_meta_analysis"
+output: html_document
+date: "2024-11-13"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+These scripts analyse the output "linked genes" and "persistent linked genes" from the tumor airways comparisons combined script, and use a meta-analysis approach to give supporting evidence that they are differentially expressed in airways of smokers.
+
+# Making a combined table to rank genes of interest and compare studies
+
+### Read in the linked genes and persistent linked genes
+```{r}
+
+# Read in the linked genes
+linked_genes <- read.table('../2_Outputs/A1_TE_TM_linked_genes_nocutoffs_20241112.txt', header = TRUE)
+
+# Read in the persistent linked genes
+persistent_linked_genes <- read.table('../2_Outputs/A1_TE_TM_A2_persistent_linked_genes_nocutoffs_20241112.txt', header = TRUE)
+
+```
+
+## Read in airway DEGs from all datasets
+```{r}
+## Read in the tables
+
+GSE4302_CS_NS_GEO2R_limma_sig <- read.table("../2_Outputs/1_Airway_DEGs/GSE4302_CS_NS_GEO2R_limma_sig_20241114.txt", sep = '\t')
+
+GSE7895_CS_NS_GEO2R_limma_sig <- read.table("../2_Outputs/1_Airway_DEGs/GSE7895_CS_NS_GEO2R_limma_sig_20241114.txt", sep = '\t')
+
+GSE14633_CS_NS_GEO2R_limma_sig <- read.table("../2_Outputs/1_Airway_DEGs/GSE14633_CS_NS_GEO2R_limma_sig_20241114.txt", sep = '\t')
+colnames(GSE14633_CS_NS_GEO2R_limma_sig)[2] <- "Gene.symbol" # Rename column for binding
+
+GSE19027_CS_NS_GEO2R_limma_sig <- read.table("../2_Outputs/1_Airway_DEGs/GSE19027_CS_NS_GEO2R_limma_sig_20241114.txt", sep = '\t')
+# For some reason I have to set the column names
+colnames(GSE19027_CS_NS_GEO2R_limma_sig) <- GSE19027_CS_NS_GEO2R_limma_sig[1,]
+GSE19027_CS_NS_GEO2R_limma_sig <- GSE19027_CS_NS_GEO2R_limma_sig[-1,]
+
+GSE20257_CS_NS_GEO2R_limma_sig <- read.table("../2_Outputs/1_Airway_DEGs/GSE20257_CS_NS_GEO2R_limma_sig_20241114.txt", sep = '\t')
+# For some reason I have to set the column names
+colnames(GSE20257_CS_NS_GEO2R_limma_sig) <- GSE20257_CS_NS_GEO2R_limma_sig[1,]
+GSE20257_CS_NS_GEO2R_limma_sig <- GSE20257_CS_NS_GEO2R_limma_sig[-1,]
+
+GSE63127_CS_NS_GEO2R_limma_sig <- read.table("../2_Outputs/1_Airway_DEGs/GSE63127_CS_NS_GEO2R_limma_sig_20241115.txt", sep = '\t')
+# For some reason I have to set the column names
+colnames(GSE63127_CS_NS_GEO2R_limma_sig) <- GSE63127_CS_NS_GEO2R_limma_sig[1,]
+GSE63127_CS_NS_GEO2R_limma_sig <- GSE63127_CS_NS_GEO2R_limma_sig[-1,]
+
+```
+
+## Make the combined table
+```{r}
+# Combine DEG_sig lists together, with study ID identifier column
+library(dplyr)
+
+CS_NS_gene_rank_input <- as.data.frame(rbind(
+  cbind("GSE19027", GSE19027_CS_NS_GEO2R_limma_sig$Gene.symbol, GSE19027_CS_NS_GEO2R_limma_sig$logFC, GSE19027_CS_NS_GEO2R_limma_sig$adj.P.Val ), 
+  cbind("GSE14633", GSE14633_CS_NS_GEO2R_limma_sig$Gene.symbol, GSE14633_CS_NS_GEO2R_limma_sig$logFC, GSE14633_CS_NS_GEO2R_limma_sig$adj.P.Val), 
+  cbind("GSE20257", GSE20257_CS_NS_GEO2R_limma_sig$Gene.symbol, GSE20257_CS_NS_GEO2R_limma_sig$logFC, GSE20257_CS_NS_GEO2R_limma_sig$adj.P.Val), 
+  cbind("GSE4302", GSE4302_CS_NS_GEO2R_limma_sig$Gene.symbol, GSE4302_CS_NS_GEO2R_limma_sig$logFC, GSE4302_CS_NS_GEO2R_limma_sig$adj.P.Val), 
+  cbind("GSE63127",GSE63127_CS_NS_GEO2R_limma_sig$Gene.symbol, GSE63127_CS_NS_GEO2R_limma_sig$logFC, GSE63127_CS_NS_GEO2R_limma_sig$adj.P.Val), 
+  cbind("GSE7895", GSE7895_CS_NS_GEO2R_limma_sig$Gene.symbol, GSE7895_CS_NS_GEO2R_limma_sig$logFC, GSE7895_CS_NS_GEO2R_limma_sig$adj.P.Val)))
+
+colnames(CS_NS_gene_rank_input) <- c("Study_ID", "Gene.symbol", "log2FC", "adj.P.Val")
+head(CS_NS_gene_rank_input)
+
+```
+
+## Creating the ranked list
+```{r}
+
+# Convert the log2FC and adj.P.Val to numeric values
+CS_NS_gene_rank_input$log2FC <- as.numeric(CS_NS_gene_rank_input$log2FC)
+CS_NS_gene_rank_input$adj.P.Val <- as.numeric(CS_NS_gene_rank_input$adj.P.Val)
+
+# Easier variable name
+df <- CS_NS_gene_rank_input
+
+# Step 1: Group by gene name
+grouped_df <- df %>%
+  group_by(Gene.symbol)
+
+# Step 2: Create a summary table with the required statistics
+summary_table <- grouped_df %>%
+  summarise(
+    num_studies = n_distinct(Study_ID),
+    studies_list = paste(unique(Study_ID), collapse = ", "),
+    avg_log2FC = mean(log2FC, na.rm = TRUE),
+    avg_abs_log2FC = abs(mean(log2FC, na.rm = TRUE)),
+    sd_log2FC = sd(log2FC),
+    avg_adj.P.Val = mean(adj.P.Val, na.rm = TRUE),
+    sd_adj.P.Val = sd(adj.P.Val)
+  )
+
+# Normalize values to a common scale (0 to 1)
+summary_table$normalized_num_studies <- (summary_table$num_studies - min(summary_table$num_studies)) / (max(summary_table$num_studies) - min(summary_table$num_studies))
+summary_table$normalized_avg_abs_log2FC <- (summary_table$avg_abs_log2FC - min(summary_table$avg_abs_log2FC)) / (max(summary_table$avg_abs_log2FC) - min(summary_table$avg_abs_log2FC))
+
+# Assign weights for both factors (modify as needed)
+num_studies_weight <- 0.5
+abs_log2FC_weight <- 0.5
+
+# Calculate the ranking score
+summary_table$ranking_score <- num_studies_weight * summary_table$normalized_num_studies +
+                               abs_log2FC_weight * summary_table$normalized_avg_abs_log2FC
+
+# Rank the genes based on the calculated ranking score
+CS_NS_ranked_genes <- summary_table %>%
+  arrange(desc(ranking_score))
+
+# Add a column with the rank order
+CS_NS_ranked_genes["rank_order"] <- rownames(CS_NS_ranked_genes)
+#head(CS_NS_ranked_genes, n = 20)
+
+# Save the output
+write.table(CS_NS_ranked_genes, "../2_Outputs/1_Airway_DEGs/CS_NS_GEO2R_limma_ranked_genes.txt", sep = '\t', row.names = FALSE, col.names = TRUE)
+
+```
+
+## Histograms showing numbers of genes occurring in multiple studies (overall genes and genes of interest)
+
+```{r}
+
+# Histogram of number of studies every gene appears in
+hist(CS_NS_ranked_genes$num_studies, 
+     xlim = c(0.5, 6.5),  # Adjust x-axis limits slightly
+     ylim = c(0,6000),
+     breaks = seq(0.5, 6.5, by = 1),  # Shift breaks by 0.5
+     main = "Number of CS/NS airway datasets all genes are significant in",
+     xlab = "Number of datasets",
+     ylab = "Number of genes")
+
+# Filter the ranked genes to the "linked" genes
+CS_NS_ranked_genes_linked <- CS_NS_ranked_genes %>%
+  filter(Gene.symbol %in% linked_genes$Gene)
+# Histogram of number of studies every "linked" gene appears in
+hist(CS_NS_ranked_genes_linked$num_studies, 
+     xlim = c(0.5, 6.5),  # Adjust x-axis limits slightly
+     #ylim = c(0,6000),
+     breaks = seq(0.5, 6.5, by = 1),  # Shift breaks by 0.5
+     main = "Number of CS/NS airway datasets the 'linked' genes are significant in",
+     xlab = "Number of datasets",
+     ylab = "Number of genes")
+
+# Filter the ranked genes to the persistent linked genes
+CS_NS_ranked_genes_persistent_linked <- CS_NS_ranked_genes %>%
+  filter(Gene.symbol %in% persistent_linked_genes$Gene)
+# Histogram of number of studies every "persistent linked" gene appears in
+hist(CS_NS_ranked_genes_persistent_linked$num_studies, 
+     xlim = c(0.5, 6.5),  # Adjust x-axis limits slightly
+     #ylim = c(0,6000),
+     breaks = seq(0.5, 6.5, by = 1),  # Shift breaks by 0.5
+     main = "Number of CS/NS airway datasets the 'persistent linked' genes are significant in",
+     xlab = "Number of datasets",
+     ylab = "Number of genes")
+
+```
+
+
+# Calculating standard mean difference (SMD)
+
+### getMeanSD: Function to return a table of mean and SD values for each gene in a matrix. 
+```{r}
+getMeanSD <- function(GSE_readcount_input, current_smoker_indexes, never_smoker_indexes){
+
+	# Make dataframe to contain the info
+	GSE_CS_NS_mean_SD <- data.frame(
+	  ID = rownames(GSE_readcount_input),
+	  Current_smoker_count = NA,
+	  Current_smoker_mean = NA,
+	  Current_smoker_SD = NA,
+	  Never_smoker_count = NA,
+	  Never_smoker_mean = NA,
+	  Never_smoker_SD = NA
+	)
+	
+	# Loop through each gene and calculate mean and standard deviation
+	for (i in 1:nrow(GSE_readcount_input)) { #Looping through rows
+	  Current_row <- GSE_readcount_input[i,] #Extract the row
+	  current_smoker_values <- GSE_readcount_input[i, current_smoker_indexes]
+	  never_smoker_values   <- GSE_readcount_input[i, never_smoker_indexes]
+	  
+	  # Calculate mean and standard deviation for Current_smoker
+	  current_mean <- mean(as.numeric(current_smoker_values))
+	  current_sd   <- sd(as.numeric(current_smoker_values))
+	  
+	  # Calculate mean and standard deviation for Never_smoker
+	  never_mean <- mean(as.numeric(never_smoker_values))
+	  never_sd   <- sd(as.numeric(never_smoker_values))
+	  
+	  # Add results to the new dataframe
+	  GSE_CS_NS_mean_SD[i, 2:4] <- c(length(current_smoker_values), current_mean, current_sd)
+	  GSE_CS_NS_mean_SD[i, 5:7] <- c(length(never_smoker_values), never_mean, never_sd)
+	}
+	return(GSE_CS_NS_mean_SD)
+}
+
+# Save the function
+#dump("getMeanSD", file = "./Functions/getMeanSD.R")
+```
+
+### Read in the normalized read count information
+```{r}
+GSE4302_expr_matrix  <- read.table("../2_Outputs/2_Airway_expression/GSE4302_expr_matrix_20241115.txt", header = T)
+GSE4302_sstat_data   <- read.table("../2_Outputs/2_Airway_expression/GSE4302_sstat_data.txt", header = T)
+GSE4302_gene_symbol  <- read.table("../2_Outputs/2_Airway_expression/GSE4302_gene_symbol.txt", header = T)
+
+GSE7895_expr_matrix  <- read.table("../2_Outputs/2_Airway_expression/GSE7895_expr_matrix_20241115.txt", header = T)
+GSE7895_sstat_data   <- read.table("../2_Outputs/2_Airway_expression/GSE7895_sstat_data.txt", header = T)
+GSE7895_gene_symbol  <- read.table("../2_Outputs/2_Airway_expression/GSE7895_gene_symbol.txt", header = T)
+
+GSE14633_expr_matrix <- read.table("../2_Outputs/2_Airway_expression/GSE14633_expr_matrix_20241115.txt", header = T)
+GSE14633_sstat_data  <- read.table("../2_Outputs/2_Airway_expression/GSE14633_sstat_data.txt", header = T)
+GSE14633_gene_symbol <- read.table("../2_Outputs/2_Airway_expression/GSE14633_gene_symbol.txt", header = T)
+
+GSE19027_expr_matrix <- read.table("../2_Outputs/2_Airway_expression/GSE19027_expr_matrix_20241115.txt", header = T)
+GSE19027_sstat_data  <- read.table("../2_Outputs/2_Airway_expression/GSE19027_sstat_data.txt", header = T)
+GSE19027_gene_symbol <- read.table("../2_Outputs/2_Airway_expression/GSE19027_gene_symbol.txt", header = T)
+
+GSE20257_expr_matrix <- read.table("../2_Outputs/2_Airway_expression/GSE20257_expr_matrix_20241115.txt", header = T)
+GSE20257_sstat_data  <- read.table("../2_Outputs/2_Airway_expression/GSE20257_sstat_data.txt", header = T)
+GSE20257_gene_symbol <- read.table("../2_Outputs/2_Airway_expression/GSE20257_gene_symbol.txt", header = T)
+
+GSE63127_expr_matrix <- read.table("../2_Outputs/2_Airway_expression/GSE63127_expr_matrix_20241118.txt", header = T)
+GSE63127_sstat_data  <- read.table("../2_Outputs/2_Airway_expression/GSE63127_sstat_data.txt", header = T)
+GSE63127_gene_symbol  <- read.table("../2_Outputs/2_Airway_expression/GSE63127_gene_symbol.txt", header = T)
+
+```
+
+### Apply getMeanSD function to CS vs NS comparisons, and add GEO_ID identifier column
+```{r}
+
+## GSE4302
+GSE4302_current_smoker_indexes <- which(GSE4302_sstat_data[1]=="current_smoker")
+GSE4302_never_smoker_indexes   <- which(GSE4302_sstat_data[1]=="healthy_control")
+GSE4302_CS_NS_mean_SD <- getMeanSD(GSE4302_expr_matrix, GSE4302_current_smoker_indexes, GSE4302_never_smoker_indexes)
+GSE4302_CS_NS_mean_SD <- cbind(GEO_ID = "GSE4302", GSE4302_CS_NS_mean_SD)
+GSE4302_CS_NS_mean_SD$Gene <- GSE4302_gene_symbol$x # Add gene symbol column
+
+# GSE7895
+GSE7895_current_smoker_indexes <- which(GSE7895_sstat_data[1]=="current_smoker")
+GSE7895_never_smoker_indexes   <- which(GSE7895_sstat_data[1]=="never_smoker")
+GSE7895_CS_NS_mean_SD <- getMeanSD(GSE7895_expr_matrix, GSE7895_current_smoker_indexes, GSE7895_never_smoker_indexes)
+GSE7895_CS_NS_mean_SD <- cbind(GEO_ID = "GSE7895", GSE7895_CS_NS_mean_SD)
+GSE7895_CS_NS_mean_SD$Gene <- GSE7895_gene_symbol$x
+
+# GSE19027
+GSE19027_current_smoker_indexes <- which(GSE19027_sstat_data[1]=="current_smoker")
+GSE19027_never_smoker_indexes   <- which(GSE19027_sstat_data[1]=="never_smoker")
+GSE19027_CS_NS_mean_SD <- getMeanSD(GSE19027_expr_matrix, GSE19027_current_smoker_indexes, GSE19027_never_smoker_indexes)
+GSE19027_CS_NS_mean_SD <- cbind(GEO_ID = "GSE19027", GSE19027_CS_NS_mean_SD)
+GSE19027_CS_NS_mean_SD$Gene <- GSE19027_gene_symbol$x
+
+# GSE20257
+GSE20257_current_smoker_indexes <- which(GSE20257_sstat_data[1]=="smoker")
+GSE20257_never_smoker_indexes   <- which(GSE20257_sstat_data[1]=="non.smoker")
+GSE20257_CS_NS_mean_SD <- getMeanSD(GSE20257_expr_matrix, GSE20257_current_smoker_indexes, GSE20257_never_smoker_indexes)
+GSE20257_CS_NS_mean_SD <- cbind(GEO_ID = "GSE20257", GSE20257_CS_NS_mean_SD)
+GSE20257_CS_NS_mean_SD$Gene <- GSE20257_gene_symbol$x
+
+# GSE63127
+GSE63127_current_smoker_indexes <- which(GSE63127_sstat_data[1]=="smoker")
+GSE63127_never_smoker_indexes   <- which(GSE63127_sstat_data[1]=="non.smoker")
+GSE63127_CS_NS_mean_SD <- getMeanSD(GSE63127_expr_matrix, GSE63127_current_smoker_indexes, GSE63127_never_smoker_indexes)
+GSE63127_CS_NS_mean_SD <- cbind(GEO_ID = "GSE63127", GSE63127_CS_NS_mean_SD)
+GSE63127_CS_NS_mean_SD$Gene <- GSE63127_gene_symbol$x
+
+```
+
+### Apply getMeanSD function to the persistent linked gene list to generate a table of SMD values
+```{r}
+library(meta)
+
+## Use the persistent linked genes list as the input genes list
+gene_list <- persistent_linked_genes
+
+## Put the dataframes in a list
+dataframe_list <- list(GSE4302_CS_NS_mean_SD, GSE7895_CS_NS_mean_SD, GSE19027_CS_NS_mean_SD, GSE20257_CS_NS_mean_SD, GSE63127_CS_NS_mean_SD)
+
+
+# Make a dataframe as a template that will hold the values for each gene as input to SMD calculation
+CS_NS_SMD_input_template <- data.frame(
+	  GEO_ID = character(0),
+    Gene = character(0),
+	  Current_smoker_count = numeric(0),
+	  Current_smoker_mean = numeric(0),
+	  Current_smoker_SD = numeric(0),
+	  Never_smoker_count = numeric(0),
+	  Never_smoker_mean = numeric(0),
+	  Never_smoker_SD = numeric(0)
+	)
+# Make a dataframe that will have all the SMD output values
+persistent_linked_CS_NS_SMD_summary <- data.frame(
+  GEO_ID = character(0),
+  gene = character(0),
+  ID = character(0),
+  n_obs = numeric(0),
+  SMD = numeric(0),
+  CI_95_lower = numeric(0),
+  CI_95_upper = numeric(0),
+  z_statistic = numeric(0),
+  p_value = numeric(0),
+  method = character(0)
+)
+
+# Loop through the list and extract individual genes
+for (i in 1:nrow(gene_list)){ # For each gene on the gene list
+  
+  df_SMD_input <- CS_NS_SMD_input_template # Make a new dataframe for data to input into SMD
+  
+  for (j in 1:length(dataframe_list)){ # For each dataframe in the list of dataframes
+    df <- dataframe_list[[j]] # Extract dataframe j
+    # Append the row with the gene of interest to the SMD input dataframe
+    df_SMD_input <- rbind(df_SMD_input, df[df$Gene==gene_list[i,]$Gene,])
+  }
+  
+  for (k in 1:length(df_SMD_input[,1])){ # For all the GSE values in the input
+    # Input the resulting df into the SMD calculation function
+    df_SMD_values <- metacont(Current_smoker_count, Current_smoker_mean, Current_smoker_SD, Never_smoker_count, Never_smoker_mean, Never_smoker_SD, sm="SMD", data = df_SMD_input, subset=k)
+  
+  
+  # Make a summary of the values
+    df_SMD_summary <- as.data.frame(t(c(GEO_ID = df_SMD_input[k,1], gene = gene_list$Gene[i], ID = df_SMD_input$ID[k], n_obs = sum(df_SMD_values$n.e, df_SMD_values$n.c), SMD = df_SMD_values$TE, CI_95_lower = df_SMD_values$lower, CI_95_upper =  df_SMD_values$upper, z_stat = df_SMD_values$statistic, p_value = df_SMD_values$pval, method = df_SMD_values$method.smd)))
+  
+  # Append results from this to the output dataframe
+    persistent_linked_CS_NS_SMD_summary <- rbind(persistent_linked_CS_NS_SMD_summary, df_SMD_summary)
+  }
+}
+
+head(persistent_linked_CS_NS_SMD_summary)
+```
+
+## Filter the SMD table to the probesets of interest (those that were selected in the DEGs calculations due to having lowest FDR)
+```{r}
+
+## Grab all the probe IDs of interest
+
+dataframe_DEGs_list <- list(GSE4302 = GSE4302_CS_NS_GEO2R_limma_sig, GSE63127 = GSE63127_CS_NS_GEO2R_limma_sig, GSE14633 = GSE14633_CS_NS_GEO2R_limma_sig, GSE19027 = GSE19027_CS_NS_GEO2R_limma_sig, GSE20257 = GSE20257_CS_NS_GEO2R_limma_sig, GSE7895 = GSE7895_CS_NS_GEO2R_limma_sig)
+
+GSE_probeset_gene <- data.frame(GSE = character(0), probeset = character(0), gene = character(0))
+
+
+## I worked through the logic for this in my head and it is difficult to explain in words
+for (i in 1:length(dataframe_DEGs_list)) { # Iterate through all the dataframes of DEGs
+  df <- dataframe_DEGs_list[[i]]
+  for (j in 1:nrow(gene_list)){
+    df_gene_j <- df[df$Gene==gene_list$Gene[j],] # Pull out the rows with gene names in the persistent linked genes list
+    df_name <- names(dataframe_DEGs_list[i])
+    if (length(df_gene_j$ID)>0) { # If that row existed in this dataframe
+      probeset_ID_gene_j <- df_gene_j$ID
+      gene_j <- df_gene_j$Gene.symbol
+      GSE_probeset_pair_gene_j <- data.frame(df_name, probeset_ID_gene_j, gene_j)
+      GSE_probeset_gene <- rbind(GSE_probeset_pairs, GSE_probeset_pair_gene_j) # Store the GEO ID, probeset ID, and gene name
+    }  
+  }
+}
+
+colnames(GSE_probeset_gene) <- c("GEO_ID", "ID", "gene")
+
+# Now see if this works for filtering the main list
+persistent_linked_CS_NS_SMD_summary_ID_filter <- persistent_linked_CS_NS_SMD_summary %>%
+  semi_join(GSE_probeset_gene, by = c("GEO_ID", "gene", "ID"))
+
+```
+
+## Cumulative SMDs for each gene (overall summary for a gene, not separated by study)
+
+```{r}
+
+library(meta)
+
+## Use the persistent linked genes list as the input genes list
+gene_list <- persistent_linked_genes
+
+## Put the dataframes in a list
+dataframe_list <- list(GSE4302 = GSE4302_CS_NS_mean_SD, GSE7895 = GSE7895_CS_NS_mean_SD, GSE19027 = GSE19027_CS_NS_mean_SD, GSE20257 = GSE20257_CS_NS_mean_SD, GSE63127 = GSE63127_CS_NS_mean_SD)
+
+# Make a dataframe as a template that will hold the values for each gene as input to SMD calculation
+CS_NS_SMD_input_template <- data.frame(
+	  GEO_ID = character(0),
+    Gene = character(0),
+	  Current_smoker_count = numeric(0),
+	  Current_smoker_mean = numeric(0),
+	  Current_smoker_SD = numeric(0),
+	  Never_smoker_count = numeric(0),
+	  Never_smoker_mean = numeric(0),
+	  Never_smoker_SD = numeric(0)
+	)
+# Make a dataframe that will have all the SMD output values
+persistent_linked_CS_NS_SMD_summary_overall <- data.frame(
+  GEO_ID = character(0),
+  gene = character(0),
+  n_obs = numeric(0),
+  SMD = numeric(0),
+  CI_95_lower = numeric(0),
+  CI_95_upper = numeric(0),
+  z_statistic = numeric(0),
+  p_value = numeric(0),
+  method = character(0)
+)
+
+# Loop through the list and extract individual genes
+for (i in 1:nrow(gene_list)){ # For each gene on the gene list
+  
+  df_SMD_input <- CS_NS_SMD_input_template # Make a new dataframe for data to input into SMD
+  
+  for (j in 1:length(dataframe_list)){ # For each dataframe in the list of dataframes
+    df <- dataframe_list[[j]] # Extract dataframe j
+    # Append the row with the gene of interest to the SMD input dataframe
+    df_SMD_input <- rbind(df_SMD_input, df[df$Gene==gene_list[i,]$Gene]) 
+  }
+  
+  # Input the resulting df into the SMD calculation function
+  df_SMD_values <- metacont(Current_smoker_count, Current_smoker_mean, Current_smoker_SD, Never_smoker_count, Never_smoker_mean, Never_smoker_SD, sm="SMD", data = df_SMD_input)
+  
+  
+  # Make a summary of the values
+      df_SMD_summary_overall <- as.data.frame(t(c(gene = gene_list$Gene[i], n_studies = df_SMD_values$k, n_obs = sum(df_SMD_values$n.e.pooled, df_SMD_values$n.c.pooled), SMD_common= df_SMD_values$TE.common, CI_95_lower_common = df_SMD_values$lower.common, CI_95_upper_common =  df_SMD_values$upper.common, z_stat_common = df_SMD_values$statistic.common, p_value_common = df_SMD_values$pval.common, SMD_random= df_SMD_values$TE.random, CI_95_lower_random = df_SMD_values$lower.random, CI_95_upper_random =  df_SMD_values$upper.random, z_stat_random = df_SMD_values$statistic.random, p_value_random = df_SMD_values$pval.random, method = df_SMD_values$method.smd, Q = df_SMD_values$Q, Q_df = df_SMD_values$df.Q,  Q_pval = df_SMD_values$pval.Q)))
+  
+  # Append results from this to the output dataframe
+  persistent_linked_CS_NS_SMD_summary_overall <- rbind(persistent_linked_CS_NS_SMD_summary_overall, df_SMD_summary_overall)
+  
+}
+
+head(persistent_linked_CS_NS_SMD_summary)
+
+```
+
+
+

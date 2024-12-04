@@ -1,0 +1,341 @@
+---
+title: "dataset comparisons"
+output: html_document
+date: "2024-12-03"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+2024/12/02: Now unlike the way I did it in the big combined script, here I am going to try out doing more stringent FDR cutoffs instead of log2FC cutoffs. I may also change the methylation list input, in fact I probably should (either use limma with cbioportal or confirm results from the probe-wise version).
+
+# Comparing and filtering A1, TE, TM, and A2 to generate "linked genes" and "linked persistent genes" lists
+
+## Reading in datasets to intersect
+```{r}
+GSE63127_CS_NS_GEO2R_limma_sig <- read.table("../2_Outputs/1_Airway_DEGs/GSE63127_CS_NS_GEO2R_limma_sig_20241115.txt", header = TRUE)
+
+DMeth_LUAD_T_NM_hm450_sig <- read.table("../2_Outputs/5_Tumor_DMGs/DMeth_LUAD_T_NM_hm450_sig_20241108_PM.txt")
+
+DGE_LUAD_T_NM_DESeq2_sig <- read.table("../2_Outputs/4_Tumor_DEGs/DGE_LUAD_T_NM_DSeq2_sig_20241127.txt")
+
+TCGA_LUAD_limma_DMG <- read.table("../2_Outputs/5_Tumor_DMGs/TCGA_LUAD_limma_DMG_20241203.txt")
+
+```
+
+#######
+
+# I. Using more stringent FDR cutoffs
+
+## I.i Applying FDR cutoffs
+```{r}
+
+### Testing FDR and log2FC cutoffs ###
+
+# A1 DEGs
+FDR_cutoff_A1=0.001
+log2FC_cutoff_A1=0.5
+nrow(GSE63127_CS_NS_GEO2R_limma_sig[GSE63127_CS_NS_GEO2R_limma_sig$adj.P.Val<FDR_cutoff_A1
+                                    & abs(GSE63127_CS_NS_GEO2R_limma_sig$logFC)>log2FC_cutoff_A1,])
+
+hist(GSE63127_CS_NS_GEO2R_limma_sig[GSE63127_CS_NS_GEO2R_limma_sig$adj.P.Val<FDR_cutoff_A1
+                                    & abs(GSE63127_CS_NS_GEO2R_limma_sig$logFC)>log2FC_cutoff_A1,]$logFC, breaks = 100)
+
+# TCGA-LUAD DEGs
+FDR_cutoff_TE=0.001
+log2FC_cutoff_TE = 1.5
+
+nrow(DGE_LUAD_T_NM_DESeq2_sig[DGE_LUAD_T_NM_DESeq2_sig$FDR<FDR_TE
+                              & abs(DGE_LUAD_T_NM_DESeq2_sig$log2FC)>log2FC_cutoff_TE,])
+
+hist(DGE_LUAD_T_NM_DESeq2_sig[DGE_LUAD_T_NM_DESeq2_sig$FDR<FDR_TE
+                              & abs(DGE_LUAD_T_NM_DESeq2_sig$log2FC)>log2FC_cutoff_TE,]$log2FC, breaks = 100)
+
+
+
+# TCGA-LUAD DMGs
+FDR_cutoff_TM=0.001
+log2FC_cutoff_TM = 0.5
+nrow(DMeth_LUAD_T_NM_hm450_sig[DMeth_LUAD_T_NM_hm450_sig$FDR<FDR_cutoff_TM
+                               & abs(DMeth_LUAD_T_NM_hm450_sig$log2foldChange)>log2FC_cutoff_TM,])
+
+hist(DMeth_LUAD_T_NM_hm450_sig[DMeth_LUAD_T_NM_hm450_sig$FDR<FDR_cutoff_TM
+                               & abs(DMeth_LUAD_T_NM_hm450_sig$log2foldChange)>log2FC_cutoff_TM,]$log2foldChange, breaks = 100)
+
+
+### Applying log2FC cutoffs and formatting consistently for merge ###
+
+GSE63127_CS_NS_GEO2R_limma_sig_cutoff <- GSE63127_CS_NS_GEO2R_limma_sig %>%
+  filter(abs(logFC)>log2FC_cutoff_A1) %>%
+  filter(adj.P.Val < FDR_cutoff_A1) %>%
+  dplyr::rename(., Gene = Gene.symbol, FDR_A1 = adj.P.Val, log2FC_A1 = logFC) %>%
+  dplyr::select(., Gene, FDR_A1, log2FC_A1)
+
+DGE_LUAD_T_NM_DESeq2_sig_cutoff <- DGE_LUAD_T_NM_DESeq2_sig %>%
+  filter(abs(log2FC)>log2FC_cutoff_TE) %>%
+  filter(FDR < FDR_cutoff_TE) %>%
+  dplyr::rename(., FDR_TE = FDR, log2FC_TE = log2FC, Gene = gene) %>%
+  dplyr::select(., Gene, FDR_TE, log2FC_TE)
+
+DMeth_LUAD_T_NM_hm450_sig_cutoff <- DMeth_LUAD_T_NM_hm450_sig %>%
+  filter(abs(log2foldChange)>log2FC_cutoff_TM) %>%
+  filter(FDR < FDR_cutoff_TM) %>%
+  dplyr::rename(., FDR_TM = FDR, log2FC_TM = log2foldChange) %>%
+  dplyr::select(., Gene, FDR_TM, log2FC_TM)
+
+```
+
+
+
+### I.ii Intersection of A1 and TE DEGs
+```{r}
+## Merge the lists
+# A1_TE_merged_DEGs <- GSE63127_CS_NS_GEO2R_limma_sig_cutoff %>%
+#   inner_join(., DGE_LUAD_T_NM_signed_rank_sig_cutoff, by = "Gene") %>%
+#   filter(sign(log2FC_A1)==sign(log2FC_TE)) # Filter to genes with same signs
+#   
+# nrow(A1_TE_merged_DEGs)
+
+#2024/11/27: Using the DESeq2 list instead
+A1_TE_merged_DEGs <- GSE63127_CS_NS_GEO2R_limma_sig_cutoff %>%
+  inner_join(., DGE_LUAD_T_NM_DESeq2_sig_cutoff, by = "Gene") %>%
+  filter(sign(log2FC_A1)==sign(log2FC_TE)) # Filter to genes with same signs
+
+nrow(A1_TE_merged_DEGs)
+
+```
+
+### I.iii Intersection of A1/TE DEGs with TM DMGs
+```{r}
+## Merge the lists
+A1_TE_TM_linked_genes <- A1_TE_merged_DEGs %>%
+  inner_join(., DMeth_LUAD_T_NM_hm450_sig_cutoff, by = "Gene") %>%
+  filter(sign(log2FC_A1)!=sign(log2FC_TM)) # Filter to genes with opposite sign
+  
+nrow(A1_TE_TM_linked_genes)
+
+```
+
+
+### I.iv.1 Visualizing Spearman correlations of log2FC values
+```{r}
+## Visualizing Spearman correlations
+library(GGally)
+ggpairs(A1_TE_TM_linked_genes[, c("log2FC_A1", "log2FC_TE", "log2FC_TM")],
+  upper = list(continuous = wrap("cor", method = "spearman")),
+  lower = list(continuous = "points", combo = "facethist", discrete = "facetbar", na ="na"),
+  diag = list(continuous = "densityDiag", discrete = "barDiag", na = "naDiag"))
+
+```
+
+### I.iv.2 Visualizing multiple linear regression of the log2FC values
+```{r}
+mlr_airway_model <- lm(log2FC_A1 ~ log2FC_TE + log2FC_TM, data = A1_TE_TM_linked_genes)
+summary(mlr_airway_model)
+
+
+library(scatterplot3d)
+s3d <- scatterplot3d(x = A1_TE_TM_linked_genes$log2FC_A1, 
+              y = A1_TE_TM_linked_genes$log2FC_TE, 
+              z = A1_TE_TM_linked_genes$log2FC_TM,
+              main="Plotting airway expression vs. tumor expression vs. tumor methylation",
+              xlab = "log2FC(TE)",
+              ylab = "log2FC(TM)",
+              zlab = "log2FC(A1)",
+              pch = 19,
+              #color = colors_3d, # getting color values from methylation sign
+              color = "steelblue",
+              labels = A1_TE_TM_linked_genes$Gene,
+              type = "h",
+              #highlight.3d = TRUE, 
+              angle = 60
+              )
+s3d$plane3d(mlr_airway_model) # Add a plane based on the multiple linear regression model
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+#######
+
+Below is using log2FC cutoffs, above is using more stringent FDR cutoffs as well as log2FC cutoffs
+
+###
+
+# II. Using log2FC cutoffs
+
+## 5.1.2 Applying log2FC cutoffs
+```{r}
+
+### Testing log2FC cutoffs ###
+
+# A1 DEGs
+log2Thres_A1=0
+nrow(GSE63127_CS_NS_GEO2R_limma_sig[abs(GSE63127_CS_NS_GEO2R_limma_sig$logFC)>log2Thres_A1,])
+
+# TCGA-LUAD DEGs
+log2Thres_TE=0
+nrow(DGE_LUAD_T_NM_signed_rank_sig[abs(DGE_LUAD_T_NM_signed_rank_sig$log2foldChange)>log2Thres_TE,])
+
+# TCGA-LUAD DMGs
+log2Thres_TM=0
+nrow(DMeth_LUAD_T_NM_hm450_sig[abs(DMeth_LUAD_T_NM_hm450_sig$log2foldChange)>log2Thres_TM,])
+
+## Notes on number of linked genes after filtering:
+# 0, 0, 0 => 950 genes
+# 0.2, 1, 0.3 => 143 genes
+# 0.5, 2, 0.5 => 14 genes
+# 0.5, 1, 0.5 => 26 genes (but still good correlation across board unlike with other options)
+
+
+### Applying log2FC cutoffs and formatting consistently for merge ###
+
+GSE63127_CS_NS_GEO2R_limma_sig_cutoff <- GSE63127_CS_NS_GEO2R_limma_sig %>%
+  filter(abs(logFC)>log2Thres_A1) %>%
+  dplyr::rename(Gene = Gene.symbol, FDR_A1 = adj.P.Val, log2FC_A1 = logFC) %>%
+  dplyr::select(., Gene, FDR_A1, log2FC_A1)
+
+DGE_LUAD_T_NM_signed_rank_sig_cutoff <- DGE_LUAD_T_NM_signed_rank_sig %>%
+  filter(abs(log2foldChange)>log2Thres_TE) %>%
+  dplyr::rename(., FDR_TE = FDR, log2FC_TE = log2foldChange) %>%
+  dplyr::select(., Gene, FDR_TE, log2FC_TE)
+
+DMeth_LUAD_T_NM_hm450_sig_cutoff <- DMeth_LUAD_T_NM_hm450_sig %>%
+  filter(abs(log2foldChange)>log2Thres_TM) %>%
+  dplyr::rename(., FDR_TM = FDR, log2FC_TM = log2foldChange) %>%
+  dplyr::select(., Gene, FDR_TM, log2FC_TM)
+
+
+## 2024/11/27 -- trying out the deseq2 T-E list for comparison
+DGE_LUAD_T_NM_DESeq2_sig_cutoff <- DGE_LUAD_T_NM_DESeq2_sig %>%
+  filter(abs(log2FC)>log2Thres_TE) %>%
+  dplyr::rename(., FDR_TE = FDR, log2FC_TE = log2FC, Gene = gene) %>%
+  dplyr::select(., Gene, FDR_TE, log2FC_TE)
+```
+
+## 5.2 Filtering by dataset intersection
+
+### 5.2.1 Intersection of A1 and TE DEGs
+```{r}
+## Merge the lists
+# A1_TE_merged_DEGs <- GSE63127_CS_NS_GEO2R_limma_sig_cutoff %>%
+#   inner_join(., DGE_LUAD_T_NM_signed_rank_sig_cutoff, by = "Gene") %>%
+#   filter(sign(log2FC_A1)==sign(log2FC_TE)) # Filter to genes with same signs
+#   
+# nrow(A1_TE_merged_DEGs)
+
+#2024/11/27: Using the DESeq2 list instead
+A1_TE_merged_DEGs <- GSE63127_CS_NS_GEO2R_limma_sig_cutoff %>%
+  inner_join(., DGE_LUAD_T_NM_DESeq2_sig_cutoff, by = "Gene") %>%
+  filter(sign(log2FC_A1)==sign(log2FC_TE)) # Filter to genes with same signs
+
+nrow(A1_TE_merged_DEGs)
+
+```
+
+### 5.2.2 Intersection of A1/TE DEGs with TM DMGs
+```{r}
+## Merge the lists
+A1_TE_TM_linked_genes <- A1_TE_merged_DEGs %>%
+  inner_join(., DMeth_LUAD_T_NM_hm450_sig_cutoff, by = "Gene") %>%
+  filter(sign(log2FC_A1)!=sign(log2FC_TM)) # Filter to genes with opposite sign
+  
+nrow(A1_TE_TM_linked_genes)
+
+```
+
+Note: Maybe this should incorporate a Spearman correlation filter? But for this I would need to pair samples across the tumor datasets I think, at the expression/M value level. So you can get an idea of the broader correlation with the log2FC values but to apply it more broadly you need the initial tables instead.
+
+### 5.2.3 Visualizing Spearman correlations of log2FC values
+```{r}
+## Visualizing Spearman correlations
+library(GGally)
+ggpairs(A1_TE_TM_linked_genes[, c("log2FC_A1", "log2FC_TE", "log2FC_TM")],
+  upper = list(continuous = wrap("cor", method = "spearman")),
+  lower = list(continuous = "points", combo = "facethist", discrete = "facetbar", na ="na"),
+  diag = list(continuous = "densityDiag", discrete = "barDiag", na = "naDiag"))
+
+```
+
+### 5.2.4 Visualizing multiple linear regression of the log2FC values
+```{r}
+mlr_airway_model <- lm(log2FC_A1 ~ log2FC_TE + log2FC_TM, data = A1_TE_TM_linked_genes)
+summary(mlr_airway_model)
+
+
+library(scatterplot3d)
+s3d <- scatterplot3d(x = A1_TE_TM_linked_genes$log2FC_A1, 
+              y = A1_TE_TM_linked_genes$log2FC_TE, 
+              z = A1_TE_TM_linked_genes$log2FC_TM,
+              main="Plotting airway expression vs. tumor expression vs. tumor methylation",
+              xlab = "log2FC(TE)",
+              ylab = "log2FC(TM)",
+              zlab = "log2FC(A1)",
+              pch = 19,
+              #color = colors_3d, # getting color values from methylation sign
+              color = "steelblue",
+              labels = A1_TE_TM_linked_genes$Gene,
+              type = "h",
+              #highlight.3d = TRUE, 
+              angle = 60
+              )
+s3d$plane3d(mlr_airway_model) # Add a plane based on the multiple linear regression model
+
+```
+
+
+## 5.3 Comparing and filtering A2 and "linked" genes to give "persistent linked genes"
+
+### 5.3.1 Applying log2FC cutoffs
+```{r}
+# For now, no cutoffs
+```
+
+### 5.3.2 Filtering by dataset intersection
+```{r}
+
+A1_TE_TM_A2_persistent_linked_genes <- A1_TE_TM_linked_genes %>%
+  dplyr::inner_join(., GSE7895_persistent_DEGs, by = "Gene") %>%
+  dplyr::filter(sign(log2FC_A1) == sign(CS_NS_A2)) # Ensure signs are the same between A1 and A2 CS vs NS
+
+A1_TE_TM_A2_persistent_linked_genes
+
+## Recording results based on cutoffs (when I was using the signed-rank test for TE - now I use DESeq2)
+## 0.5,1,0.5,0 => 1 (NQO1)
+## 0,0,0,0 => 27
+## 0.2, 1, 0.3 => 10
+
+```
+
+### 5.3.3 Additional checks (correlation of log2FCs in A1 and A2)
+```{r}
+cor.test(A1_TE_TM_A2_persistent_linked_genes$log2FC_A1, y = A1_TE_TM_A2_persistent_linked_genes$CS_NS_A2, use = "everything",
+    method = "spearman")
+
+ggplot(A1_TE_TM_A2_persistent_linked_genes, aes(x = log2FC_A1, y = CS_NS_A2), 
+      geom_point(color = "blue", size = 3) +                # Scatter points
+      geom_smooth(method = "lm", se = FALSE, color = "red") + # Add a trend line
+    
+ggplot(A1_TE_TM_A2_persistent_linked_genes, aes(x = log2FC_A1, y = CS_NS_A2)) +
+  geom_point(color = "blue", size = 3) +                # Scatter points
+  geom_smooth(method = "lm", se = FALSE, color = "black") + # Add a trend line +
+  theme_minimal()
+```
+
+2024/11/27: Here is a very significant interaction network I got when running using the DESeq2 TE with no cutoffs:
+https://version-12-0.string-db.org/cgi/network?networkId=baZv6RvUQLCS
