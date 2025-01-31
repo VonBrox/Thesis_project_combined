@@ -1,0 +1,222 @@
+---
+title: "Survival curves"
+output: html_document
+date: "2024-11-29"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+2024/11/29
+
+My initial plan is to take TCGA-LUAD former smokers as a group, take a list of genes of interest ("persistent linked genes"), compare those former smokers with the highest and lowest 25% expression levels of the genes of interest, and compare survival times. My rationale: This could point to persistently genes that are involved in tumor progression and mortality in addition to carcinogenesis.
+
+## Load libraries
+```{r message=FALSE, warning=FALSE, results='hide'}
+library(TCGAbiolinks)
+library(SummarizedExperiment)
+library(survival)
+library(survminer)
+library(dplyr)
+```
+
+## Read in the linked genes of interest
+```{r}
+A1_TE_TM_linked_genes <- read.table("../2_Outputs/6_Linked_genes/A1_TE_TM_linked_genes_0.01_0.25_0.001_0.75_0.01_0.25_20250101.txt", sep = ' ')
+
+A1_TE_TM_A2_persistent_linked_genes <- read.table("../2_Outputs/6_Linked_genes/A1_TE_TM_A2_persistent_linked_genes_0.01_0.25_0.001_0.75_0.01_0.25_20250101.txt", sep = ' ')
+```
+
+
+## Download clinical data
+```{r message=FALSE, warning=FALSE, results='hide'}
+
+query_clinical <- GDCquery(
+  project = "TCGA-LUAD",
+  data.category = "Clinical",
+  data.type = "Clinical Supplement"
+)
+
+# Check the available files
+query_clinical$results[[1]] %>% head()
+
+## I see that some are not BCR XML files, so I will try to remove these
+query_clinical$results[[1]] <- query_clinical$results[[1]] %>%
+  filter(data_format == "BCR XML")
+
+## Download data
+GDCdownload(query_clinical)
+clinical_data <- GDCprepare_clinic(query_clinical, clinical.info = "patient")
+
+head(clinical_data)
+
+```
+
+According to this publication:
+https://pmc.ncbi.nlm.nih.gov/articles/PMC7427766/
+
+Regarding tobacco_smoking_history:
+"1 = Lifelong Non-smokers (less than 100 cigarettes smoked in Lifetime), 2 = Current smokers (includes daily smokers and non-daily smokers or occasional smokers), 3 = Current reformed smokers for >15 years (greater than 15 years), 4 = Current reformed smokers for ≤15 years (less than or equal to 15 years). "
+
+(Also, this is an important paper: "Conclusions: In conclusion, our observations indicated that the differential expression of GYPC, NME1 and SLIT2 may be regulated by DNA methylation, and they are associated with cigarette smoke-induced LUAD, as well as serve as prognostic factors in LUAD patients." I see SLIT2 and NME1 in the linked genes but not persistent linked genes in the current version of my lists.) < 2024/12/04: Not this version, this describes the last version.
+
+It could be interesting to just compare expression levels of genes of interest in groups 3 and 4.
+For survival curves though, I think I will lump 3 and 4 together, group them into high and low expression levels of the genes of interest, and then do the survival curves comparing the top and bottom 25% as I was thinking earlier.
+
+## Download expression data
+```{r message=FALSE, warning=FALSE, results='hide'}
+query <- GDCquery(project = "TCGA-LUAD",
+                  data.category = "Transcriptome Profiling",
+                  data.type = "Gene Expression Quantification",
+                  sample.type = c("Primary Tumor", "Solid Tissue Normal"),
+                  workflow.type = "STAR - Counts")
+
+GDCdownload(query)
+
+data <- GDCprepare(query)
+
+counts <- as.data.frame(assay(data))  # Extracting the count matrix (these are supposedly raw counts)
+head(counts)  # Viewing the first few rows (genes) and columns (samples)
+
+gene_info <- as.data.frame(rowData(data))
+head(gene_info)  # Preview the first few genes and their annotations
+
+sample_info <- as.data.frame(colData(data))
+head(sample_info)  # Preview sample metadata
+
+```
+
+## Survival analysis: Comparing former smokers (groups 3 and 4) with high and low expression of individual genes of interest ("persistent linked genes")
+```{r}
+
+# Replace the sample barcodes with patient IDs (Note: maybe check more carefully that this worked properly later)
+colnames(counts) <- sample_info$patient
+
+# Subset data
+former_smokers <- clinical_data[clinical_data$tobacco_smoking_history == c(3,4), ]
+former_smokers <- former_smokers[!is.na(former_smokers$bcr_patient_barcode),] # Remove NA values
+former_smokers <- former_smokers[former_smokers$bcr_patient_barcode != c("TCGA-05-4245", "TCGA-67-3776", "TCGA-MP-A4T2"),] # Removing some values because they are not in the counts data
+
+# Testing with particular genes of interest
+genes_of_interest <- A1_TE_TM_A2_persistent_linked_genes$Gene
+
+for (gene in genes_of_interest){
+  
+  gene_of_interest <- gene
+  ID_of_interest <- gene_info[gene_info$gene_name == gene_of_interest,]$gene_id
+  
+  # Select the former smoker expression levels of this gene
+  gene_of_interest_FS_expression_values <- counts %>%
+    select(former_smokers$bcr_patient_barcode) %>%
+    filter(rownames(.) %in% ID_of_interest)
+    
+  
+  # Quantile thresholds
+  low_threshold <- quantile(t(gene_of_interest_FS_expression_values), 0.25)
+  high_threshold <- quantile(t(gene_of_interest_FS_expression_values), 0.75)
+  
+  # Group assignment
+  former_smokers$group <- ifelse(t(gene_of_interest_FS_expression_values) <= low_threshold, "Low_25%",
+                          ifelse(t(gene_of_interest_FS_expression_values) >= high_threshold, "High_25%", NA))
+  
+  former_smokers_high_low_goi <- former_smokers[!is.na(former_smokers$group),]
+  
+  # Survival object
+  surv_object <- Surv(time = former_smokers_high_low_goi$days_to_death, 
+                      event = !is.na(former_smokers_high_low_goi$days_to_death))
+  
+  # Kaplan-Meier fit
+  fit <- survfit(surv_object ~ group, data = former_smokers_high_low_goi)
+  
+  # P-value
+  p_value <- surv_pvalue(fit, data = former_smokers_high_low_goi)$pval
+  
+  if (p_value <= 0.05) {
+    # Plot survival curves
+    ggsp <- ggsurvplot(fit, data = former_smokers_high_low_goi, pval = TRUE, title = paste0("Former smokers ", gene_of_interest))
+    print(ggsp)
+  }
+}
+
+## 2024/12/04: Significant genes found: TCN1 (0.045), RBP4 (0.017), S100P (0.048), GALNT6 (0.048). Of these, S100P is also "persistent linked".
+
+
+
+## Significant genes found on first round (not applicable now): CCDC81 (0.037), SERPINB5 (0.033), S100P (0.048)
+
+```
+
+Nice, the next thing to do could be to check if these 3 genes (CCDC81, SERPINB5, S100P), which predict survival in LUAD former smokers, also just predict survival in lung cancer or cancer in general. If they do, it might diminish the relevance of the finding, or it might back it up, depending on how you look at it...
+
+I want to check the same thing but with all the patients, not just the former smokers, just as a comparison.
+
+
+## Survival analysis: Comparing all LUADs with high and low expression of individual genes of interest ("persistent linked genes")
+```{r}
+library(survival)
+library(survminer)
+
+# Replace the sample barcodes with patient IDs (Note: maybe check more carefully that this worked properly later)
+colnames(counts) <- sample_info$patient
+
+# Clean data
+all_LUAD <- clinical_data[!is.na(clinical_data$bcr_patient_barcode),]
+
+all_LUAD <- all_LUAD %>%
+  filter(!(bcr_patient_barcode %in% c("TCGA-05-4245", "TCGA-44-2664", "TCGA-67-3776", "TCGA-MP-A4T2", "TCGA-44-A47F"))) 
+         # Removing some values because they are not in the counts data
+
+# Testing with particular genes of interest
+genes_of_interest <- A1_TE_TM_A2_persistent_linked_genes$Gene
+
+for (gene in genes_of_interest){
+  
+  gene_of_interest <- gene
+  ID_of_interest <- gene_info[gene_info$gene_name == gene_of_interest,]$gene_id
+  
+  # Select the former smoker expression levels of this gene
+  gene_of_interest_expression_values <- counts %>%
+    select(all_LUAD$bcr_patient_barcode) %>%
+    filter(rownames(.) %in% ID_of_interest)
+    
+  
+  # Quantile thresholds
+  low_threshold <- quantile(t(gene_of_interest_expression_values), 0.25)
+  high_threshold <- quantile(t(gene_of_interest_expression_values), 0.75)
+  
+  # Group assignment
+  all_LUAD$group <- ifelse(t(gene_of_interest_expression_values) <= low_threshold, "Low_25%",
+                          ifelse(t(gene_of_interest_expression_values) >= high_threshold, "High_25%", NA))
+  
+  all_LUAD_high_low_goi <- all_LUAD[!is.na(all_LUAD$group),]
+  
+  # Survival object
+  surv_object <- Surv(time = all_LUAD_high_low_goi$days_to_death, 
+                      event = !is.na(all_LUAD_high_low_goi$days_to_death))
+  
+  # Kaplan-Meier fit
+  fit <- survfit(surv_object ~ group, data = all_LUAD_high_low_goi)
+  
+   
+  # P-value
+  p_value <- surv_pvalue(fit, data = all_LUAD_high_low_goi)$pval
+  
+  if (p_value <= 0.05) {
+  
+    # Plot survival curves
+    ggsp <- ggsurvplot(fit, data = all_LUAD_high_low_goi, pval = TRUE, title = paste0("all LUAD ", gene_of_interest))
+    print(ggsp)
+  }
+}
+
+## 2024/12/04: LPL (p = 0.042), TCN1 (0.0081), ZBTB16 (0.035)
+
+```
+
+[[earlier round no longer applicable]] Now SERPINB5 is <0.0001, FAM189A2 is 0.0046, EFEMP1 is 0.049, CA12 is 0.017. But CCDC81 and S100P not significant. Interesting(?)
+
+Another thing that could be interesting to look at is whether the expression level correlates with time since quitting or pack-years.
+
+Note that I chatgpt'd the heck out of this so I should see online whether there are any quality control things I should do first.
+

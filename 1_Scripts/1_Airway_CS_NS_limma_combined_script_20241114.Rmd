@@ -132,7 +132,6 @@ colnames(design) <- levels(gs)
 ```
 
 ## PCA plot, and save expression data
-
 ```{r}
 
 ## Plot PCA ##
@@ -287,7 +286,7 @@ write.table(GSE4302_CS_NS_GEO2R_limma_sig, '../2_Outputs/1_Airway_DEGs/GSE4302_C
 
 # GSE7895
 
-## Loading libraries and samplesfor differential expression analysis
+## Loading libraries and samples for differential expression analysis
 ```{r}
 # Version info: R 4.2.2, Biobase 2.58.0, GEOquery 2.66.0, limma 3.54.0
 ################################################################

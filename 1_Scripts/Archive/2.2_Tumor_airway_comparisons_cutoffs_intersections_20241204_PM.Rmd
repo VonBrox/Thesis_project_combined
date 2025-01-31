@@ -14,9 +14,9 @@ knitr::opts_chunk$set(echo = TRUE)
 
 ## Reading in datasets to intersect
 ```{r}
-GSE63127_CS_NS_GEO2R_limma_sig <- read.table("../2_Outputs/1_Airway_DEGs/GSE63127_CS_NS_GEO2R_limma_sig_20241115.txt", header = TRUE)
+GSE63127_CS_NS_GEO2R_limma <- read.table("../2_Outputs/1_Airway_DEGs/GSE63127_CS_NS_limma_20241204.txt", header = TRUE)
 
-DGE_LUAD_T_NM_DESeq2_sig <- read.table("../2_Outputs/4_Tumor_DEGs/DGE_LUAD_T_NM_DSeq2_sig_20241127.txt")
+DGE_LUAD_T_NM_DESeq2 <- read.table("../2_Outputs/4_Tumor_DEGs/TE_T_NM_DEseq2_DEGs_20241204.txt")
 
 TCGA_LUAD_limma_DMG <- read.table("../2_Outputs/5_Tumor_DMGs/TCGA_LUAD_limma_DMG_20241203.txt")
 
@@ -30,27 +30,27 @@ GSE7895_persistent_DEGs <- read.table("../2_Outputs/1_Airway_DEGs/GSE7895_persis
 
 ## I.i Applying FDR cutoffs
 ```{r}
-
+library(dplyr)
 ### Testing FDR and log2FC cutoffs ###
 
 # A1 DEGs
 FDR_cutoff_A1=0.001
 log2FC_cutoff_A1=0.5
-nrow(GSE63127_CS_NS_GEO2R_limma_sig[GSE63127_CS_NS_GEO2R_limma_sig$adj.P.Val<FDR_cutoff_A1
-                                    & abs(GSE63127_CS_NS_GEO2R_limma_sig$logFC)>log2FC_cutoff_A1,])
+nrow(GSE63127_CS_NS_GEO2R_limma[GSE63127_CS_NS_GEO2R_limma$adj.P.Val<FDR_cutoff_A1
+                                    & abs(GSE63127_CS_NS_GEO2R_limma$logFC)>log2FC_cutoff_A1,])
 
-hist(GSE63127_CS_NS_GEO2R_limma_sig[GSE63127_CS_NS_GEO2R_limma_sig$adj.P.Val<FDR_cutoff_A1
-                                    & abs(GSE63127_CS_NS_GEO2R_limma_sig$logFC)>log2FC_cutoff_A1,]$logFC, breaks = 100)
+hist(GSE63127_CS_NS_GEO2R_limma[GSE63127_CS_NS_GEO2R_limma$adj.P.Val<FDR_cutoff_A1
+                                    & abs(GSE63127_CS_NS_GEO2R_limma$logFC)>log2FC_cutoff_A1,]$logFC, breaks = 100)
 
 # TCGA-LUAD DEGs
 FDR_cutoff_TE=0.001
 log2FC_cutoff_TE = 1.5
 
-nrow(DGE_LUAD_T_NM_DESeq2_sig[DGE_LUAD_T_NM_DESeq2_sig$FDR<FDR_cutoff_TE
-                              & abs(DGE_LUAD_T_NM_DESeq2_sig$log2FC)>log2FC_cutoff_TE,])
+nrow(DGE_LUAD_T_NM_DESeq2[DGE_LUAD_T_NM_DESeq2$FDR<FDR_cutoff_TE
+                              & abs(DGE_LUAD_T_NM_DESeq2$log2FC)>log2FC_cutoff_TE,])
 
-hist(DGE_LUAD_T_NM_DESeq2_sig[DGE_LUAD_T_NM_DESeq2_sig$FDR<FDR_cutoff_TE
-                              & abs(DGE_LUAD_T_NM_DESeq2_sig$log2FC)>log2FC_cutoff_TE,]$log2FC, breaks = 100)
+hist(DGE_LUAD_T_NM_DESeq2[DGE_LUAD_T_NM_DESeq2$FDR<FDR_cutoff_TE
+                              & abs(DGE_LUAD_T_NM_DESeq2$log2FC)>log2FC_cutoff_TE,]$log2FC, breaks = 100)
 
 
 # TCGA-LUAD DMGs limma
@@ -67,13 +67,13 @@ hist(TCGA_LUAD_limma_DMG[TCGA_LUAD_limma_DMG$FDR<FDR_cutoff_TM
 
 ### Applying log2FC cutoffs and formatting consistently for merge ###
 
-GSE63127_CS_NS_GEO2R_limma_sig_cutoff <- GSE63127_CS_NS_GEO2R_limma_sig %>%
+GSE63127_CS_NS_GEO2R_limma_cutoff <- GSE63127_CS_NS_GEO2R_limma %>%
   filter(abs(logFC)>log2FC_cutoff_A1) %>%
   filter(adj.P.Val < FDR_cutoff_A1) %>%
   dplyr::rename(., Gene = Gene.symbol, FDR_A1 = adj.P.Val, log2FC_A1 = logFC) %>%
   dplyr::select(., Gene, FDR_A1, log2FC_A1)
 
-DGE_LUAD_T_NM_DESeq2_sig_cutoff <- DGE_LUAD_T_NM_DESeq2_sig %>%
+DGE_LUAD_T_NM_DESeq2_cutoff <- DGE_LUAD_T_NM_DESeq2 %>%
   filter(abs(log2FC)>log2FC_cutoff_TE) %>%
   filter(FDR < FDR_cutoff_TE) %>%
   dplyr::rename(., FDR_TE = FDR, log2FC_TE = log2FC, Gene = gene) %>%
@@ -95,8 +95,8 @@ TCGA_LUAD_limma_DMG_cutoff <- TCGA_LUAD_limma_DMG %>%
 ```{r}
 ## Merge the lists
 
-A1_TE_merged_DEGs <- GSE63127_CS_NS_GEO2R_limma_sig_cutoff %>%
-  inner_join(., DGE_LUAD_T_NM_DESeq2_sig_cutoff, by = "Gene") %>%
+A1_TE_merged_DEGs <- GSE63127_CS_NS_GEO2R_limma_cutoff %>%
+  inner_join(., DGE_LUAD_T_NM_DESeq2_cutoff, by = "Gene") %>%
   filter(sign(log2FC_A1)==sign(log2FC_TE)) # Filter to genes with same signs
 
 nrow(A1_TE_merged_DEGs)
@@ -174,7 +174,7 @@ Now to check via intersection with the "persistent" genes:
 
 ## 5.3 Comparing and filtering A2 and "linked" genes to give "persistent linked genes"
 
-### 5.3.1 Applying log2FC cutoffs
+### 5.3.1 Applying cutoffs
 ```{r}
 # For now, no cutoffs
 ```
@@ -202,3 +202,14 @@ ggplot(A1_TE_TM_A2_persistent_linked_genes, aes(x = log2FC_A1, y = CS_NS_A2)) +
   geom_smooth(method = "lm", se = FALSE, color = "black") + # Add a trend line +
   theme_minimal()
 ```
+
+## Save outputs
+```{r}
+ write.table(A1_TE_TM_linked_genes, "../2_Outputs/6_Linked_genes/A1_TE_TM_linked_genes_20241204.txt", sep = '\t')
+# 
+ write.table(A1_TE_TM_A2_persistent_linked_genes, "../2_Outputs/6_Linked_genes/A1_TE_TM_A2_persistent_linked_genes_20241204.txt", sep = '\t')
+
+
+```
+
+

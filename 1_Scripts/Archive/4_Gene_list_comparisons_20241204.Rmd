@@ -1,0 +1,119 @@
+---
+title: "5_Gene_list_comparisons"
+output: html_document
+date: "2024-10-07"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Comparing the output lists of "linked genes" and "linked persistent genes" to gene lists from other types of unique studies that relate to the question of persistent/irreversible effects in airways.
+
+## Reading in the current versions of the "linked genes" and "linked persistent genes" (subject to change)
+```{r}
+
+# linked_DEGs_v7 <- read.table("../1_Comparison_output/Aim1_Aim2_linked_DEGs_v7.txt", sep = '\t', header = TRUE)
+# 
+# persistent_linked_DEGs_v7 <- read.table("../1_Comparison_output/14_genes_pipeline_v7.txt", sep = '\t')
+# colnames(persistent_linked_DEGs_v7) <- "Gene_Symbol"
+
+# linked_DEGs <- read.table("../2_Outputs/A1_TE_TM_linked_genes_nocutoffs_20241112.txt", sep = '\t', header = TRUE)
+# 
+# persistent_linked_DEGs <- read.table("../2_Outputs/A1_TE_TM_A2_persistent_linked_genes_nocutoffs_20241112.txt", sep = '\t', header = TRUE)
+
+linked_DEGs <- read.table("../2_Outputs/6_Linked_genes/A1_TE_TM_linked_genes_0.05_0_0.05_0_0.05_0_20241205.txt", sep = '\t', header = TRUE)
+#
+persistent_linked_DEGs <- read.table("../2_Outputs/6_Linked_genes/A1_TE_TM_A2_persistent_linked_genes_0.05_0_0.05_0_0.05_0_20241205.txt", sep = '\t', header = TRUE)
+
+
+
+```
+
+## Compare linked gene lists with studies related to irreversible expression changes in airways
+```{r}
+
+## Chari et al 2007 (Lam lab SAGE study) ##
+
+raj_2007_irreversible_gene_list <- read.table("../3_Gene_lists/irreversible_expression_airways/17727719_raj_2007/17727719_raj_2007_irreversible_gene_list.txt")
+colnames(raj_2007_irreversible_gene_list) <- "Gene_Symbol"
+
+print(c("Genes common to Chari 2007 irreversible gene list and the linked DEGs: ", intersect(linked_DEGs$Gene, raj_2007_irreversible_gene_list$Gene)))
+
+print(c("Genes common to Chari 2007 irreversible gene list and the persistent linked DEGs: ", intersect(persistent_linked_DEGs$Gene, raj_2007_irreversible_gene_list$Gene)))
+
+## Barel et all 2023 (Cornell lab serial sampling study)
+
+barel_2023_irreversible_gene_list <- read.table("../3_Gene_lists/irreversible_expression_airways/37531632_barel_2023 /Table_2_truncated_37531632.txt", header = TRUE)
+
+print(c("Genes common to Barel 2023 serial sampling irreversible gene list and the linked DEGs: ", intersect(linked_DEGs$Gene, barel_2023_irreversible_gene_list$Gene)))
+
+print(c("Genes common to Barel 2023 serial sampling irreversible gene list and the persistent linked DEGs: ", intersect(persistent_linked_DEGs$Gene, barel_2023_irreversible_gene_list$Gene)))
+
+## (For sake of completeness do the reference study later. Also make venn diagrams of this.)
+
+```
+
+## Compare linked gene lists with studies related to methylation in airways
+
+```{r}
+
+## Vucic et al 2014 (link to COPD) ##
+
+# Read in table 2 ("Differentially Methylated and Differentially Expressed Genes in Chronic Obstructive Pulmonary Disease Small Airways Previously Associated with Chronic Obstructive Pulmonary Disease")
+vucic_2014_table_2 <- read.table("../3_Gene_lists/methylation_airways/24298892/24298892_vucic_2014_table_2", sep = '\t', header = TRUE)
+
+print(c("Genes common to Vucic 2014 known COPD DMG list and the linked DEGs: ", intersect(linked_DEGs$Gene, vucic_2014_table_2$Symbol)))
+
+print(c("Genes common to Vucic 2014 known COPD DMG list and the persistent linked DEGs: ", intersect(persistent_linked_DEGs$Gene, vucic_2014_table_2$Symbol)))
+
+# Read in table 3 ("Differentially Methylated and Expressed Genes Most Likely Under Epigenetic Control in Chronic Obstructive Pulmonary Disease Small Airways")
+vucic_2014_table_3 <- read.table("../3_Gene_lists/methylation_airways/24298892/24298892_vucic_2014_table_3", sep = '\t', header = TRUE)
+
+print(c("Genes common to Vucic 2014 COPD-related linked DEG-DMG list and the linked DEGs: ", intersect(linked_DEGs$Gene, vucic_2014_table_3$Symbol)))
+
+print(c("Genes common to Vucic 2014 COPD-related linked DEG-DMG  list and the persistent linked DEGs: ", intersect(persistent_linked_DEGs$Gene, vucic_2014_table_3$Symbol)))
+
+
+
+## Buro-Auriemma et al 2013 (smoking-related airway methylation changes)##
+
+Buro_2013_25_hypermethylated <- read.table("../3_Gene_lists/methylation_airways/23842454/23842454_Buro_2013_25_hypermethylated.txt")
+
+print(c("Genes common to Buro-Auriemma smoking-related hypermethylated gene list and the linked DEGs:", intersect(linked_DEGs$Gene, Buro_2013_25_hypermethylated$V1)))
+
+print(c("Genes common to Buro-Auriemma smoking-related hypermethylated gene list and the persistent linked DEGs: ", intersect(persistent_linked_DEGs$Gene, Buro_2013_25_hypermethylated$V1)))
+
+Buro_2013_25_hypomethylated <- read.table("../3_Gene_lists/methylation_airways/23842454/23842454_Buro_2013_25_hypomethylated.txt")
+
+print(c("Genes common to Buro-Auriemma 2013 smoking-related hypomethylated gene list and the linked DEGs:", intersect(linked_DEGs$Gene, Buro_2013_25_hypomethylated$V1)))
+
+print(c("Genes common to Buro-Auriemma 2013 smoking-related hypomethylated gene list and the persistent linked DEGs: ", intersect(persistent_linked_DEGs$Gene, Buro_2013_25_hypomethylated$V1)))
+
+
+```
+
+## Compare with study of irreversible expression changes in tumour-adjacent normal tissue
+```{r}
+
+# Read in Table 3 from Bosse et al 2012 ("Replicated probe sets upregulated by smoking and not returning to never-smoker levels within 10 years of smoking cessation in the discovery set and validated in at least one of the 2 replication sets")
+
+bosse_2012_table_3 <- read.table("../3_Gene_lists/tumor_adjacent_normal/22659451_bosse_2012_table_3.txt", header = TRUE)
+
+print(c("Genes common to Bosse 2012 list of genes persistently upregulated in tumor-adjacent normal tissue 10 years after smoking cessation, and the linked DEGs list:", intersect(linked_DEGs$Gene, bosse_2012_table_3$Gene_symbol)))
+
+print(c("Genes common to Bosse 2012 list of genes persistently upregulated in tumor-adjacent normal tissue 10 years after smoking cessation, and the persistent linked DEGs list:", intersect(persistent_linked_DEGs$Gene, bosse_2012_table_3$Gene_symbol)))
+
+```
+
+2024/10/09 -- Current version is not looking too interesting unfortunately, except for the few agreements in the irreversibility studies...
+Could try expanding the gene list...or checking the miRNA targets somehow...
+
+Airway methylation seems like a big thing, maybe I should try a comparison with the airway expression first as a separate branch?
+
+2024/12/04: Previous version had some more interesting stuff, may need to relax parameters
+
+
+
+
+

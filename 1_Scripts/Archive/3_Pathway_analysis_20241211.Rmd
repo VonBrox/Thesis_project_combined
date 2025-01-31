@@ -1,0 +1,224 @@
+---
+title: "3. Pathway analysis"
+output: html_document
+date: "2024-11-13"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+These scripts analyse the output "linked genes" and "persistent linked genes" from the tumor airways comparisons combined script using pathway analysis.
+
+Performing GSEA of the datasets:
+
+### Set up the necessary packages
+```{r message=FALSE, warning=FALSE, results='hide'}
+
+# Load the required packages
+library(clusterProfiler, verbose = FALSE)
+library(enrichplot, verbose = FALSE)
+library(ggplot2, verbose = FALSE)
+organism = "org.Hs.eg.db" # Human annotation database download
+BiocManager::install(organism, character.only = TRUE, verbose = FALSE) 
+library(organism, character.only = TRUE, verbose = FALSE)
+
+```
+
+### Load and prepare the lists of interest, here "linked genes" and "linked persistent genes" (subject to change)
+
+2024/11/13: I am electing to rank genes by the log2FC values from the airway dataset (A1) for pathway analysis. I reason that we are more interested in the dysregulated pathways in the airways than the tumors even if we are looking at the genes linked to all 3 modalities.
+```{r}
+
+#A1_TE_TM_linked_genes <- read.table("../2_Outputs/6_Linked_genes/A1_TE_TM_linked_genes_0.01_0_0.01_1_0.01_0.5_20241211.txt", header = TRUE)
+
+#A1_TE_TM_linked_genes <- read.table("../2_Outputs/6_Linked_genes/A1_TE_TM_linked_genes_0.05_0.2_0.05_0.8_0.05_0.5_20241211.txt", header = TRUE)
+
+A1_TE_TM_linked_genes <- read.table("../2_Outputs/6_Linked_genes/A1_TE_TM_linked_genes_0.05_0.1_0.001_0.6_0.05_0.1_20241212.txt", header = TRUE)
+
+# The log2FC of the airway dataset is what I am choosing for pathway analysis
+linked_gene_list_A1_sorted <- A1_TE_TM_linked_genes$log2FC_A1
+
+# name the vector
+names(linked_gene_list_A1_sorted) <- A1_TE_TM_linked_genes$Gene
+
+# sort the list in decreasing order (required for clusterProfiler)
+linked_gene_list_A1_sorted = sort(linked_gene_list_A1_sorted, decreasing = TRUE)
+
+```
+
+
+### Perform gene set enrichment analysis with GO
+```{r message=FALSE, warning=FALSE}
+# From the default on the website, I changed pAdjustMethod to "fdr", keyType to "SYMBOL". And there was a warning message that I should remove the nPerm parameter so I did that
+
+## overrepresentation analysis, simpliofy() function to remove redundant
+
+linked_gene_list_A1_sorted_gse <- clusterProfiler::gseGO(geneList=linked_gene_list_A1_sorted, 
+             ont ="ALL", 
+             keyType = "SYMBOL", 
+             # nPerm = 10000, 
+             minGSSize = 3, 
+             maxGSSize = 800, 
+             pvalueCutoff = 0.05, 
+             verbose = TRUE, 
+             OrgDb = organism, 
+             pAdjustMethod = "fdr")
+
+# To view the result
+linked_gene_list_A1_sorted_gse@result
+```
+
+### Make a GO dotplot of the top 10 categories of enrichment
+```{r}
+
+library(ggplot2)
+require(DOSE)
+
+linked_gene_list_A1_sorted_dotplot <- enrichplot::dotplot(linked_gene_list_A1_sorted_gse, showCategory=10, split=".sign") + facet_grid(.~.sign)
+
+linked_gene_list_A1_sorted_dotplot
+
+
+```
+
+### Make a GO enrichment map of top 10 categories
+```{r, eval = FALSE}
+
+# Calculate term similarity matrix
+term_sim_matrix <- enrichplot::pairwise_termsim(linked_gene_list_A1_sorted_gse)
+
+# Visualize enrichment results with the term similarity matrix
+linked_gene_list_A1_sorted_emapplot <- enrichplot::emapplot(term_sim_matrix, showCategory = 9)
+
+linked_gene_list_A1_sorted_emapplot
+
+# Save the plot
+#ggsave("../2_Output/RMA_output/plots/GSEA_plots/linked_gene_list_A1_sorted/linked_gene_list_A1_sorted_GO_emap.png", linked_gene_list_A1_sorted_emapplot, width = 10, height = 10)
+```
+
+### Make a GO category netplot
+```{r, eval = FALSE}
+# categorySize can be either 'pvalue' or 'geneNum'
+linked_gene_list_A1_sorted_GO_netplot <- enrichplot::cnetplot(linked_gene_list_A1_sorted_gse, categorySize="pvalue", foldChange=linked_gene_list_A1_sorted, showCategory = 3)
+
+linked_gene_list_A1_sorted_GO_netplot
+
+# Save the plot
+#ggsave("../2_Output/RMA_output/plots/GSEA_plots/linked_gene_list_A1_sorted/linked_gene_list_A1_sorted_GO_cnet.png", linked_gene_list_A1_sorted_GO_netplot, width = 15, height = 10)
+
+```
+
+## Make a ridgeplot
+```{r, fig.width = 20, fig.height = 15, eval = FALSE}
+## Make a ridgeplot
+linked_gene_list_A1_sorted_GO_ridgeplot <- enrichplot::ridgeplot(linked_gene_list_A1_sorted_gse) + labs(x = "enrichment distribution")
+
+linked_gene_list_A1_sorted_GO_ridgeplot
+
+# Save the plot
+#ggsave("../2_Output/RMA_output/plots/GSEA_plots/linked_gene_list_A1_sorted/linked_gene_list_A1_sorted_GO_ridgeplot.png", linked_gene_list_A1_sorted_GO_ridgeplot, width = 20, height = 15)
+
+```
+
+## Make GSEA plots
+```{r}
+# Use the `Gene Set` param for the index in the title, and as the value for geneSetId
+
+enrichplot::gseaplot(linked_gene_list_A1_sorted_gse, by = "all", title = linked_gene_list_A1_sorted_gse$Description[1], geneSetID = 1)
+
+enrichplot::gseaplot(linked_gene_list_A1_sorted_gse, by = "all", title = linked_gene_list_A1_sorted_gse$Description[2], geneSetID = 2)
+
+enrichplot::gseaplot(linked_gene_list_A1_sorted_gse, by = "all", title = linked_gene_list_A1_sorted_gse$Description[3], geneSetID = 3)
+```
+
+Interpreting GSEA plots: https://www.youtube.com/watch?v=Yi4d7JIlAsM
+Alright that's it for GO, now I will try KEGG
+
+### Prepare input for KEGG
+```{r}
+# Convert gene IDs for gseKEGG function
+# We will lose some genes here because not all IDs will be converted
+ids<-clusterProfiler::bitr(names(linked_gene_list_A1_sorted), fromType = "SYMBOL", toType = "ENTREZID", OrgDb=organism)
+ # remove duplicate IDS (here I use "ENSEMBL", but it should be whatever was selected as keyType)
+dedup_ids = ids[!duplicated(ids[c("SYMBOL")]),]
+
+# Create a new vector which has only the genes which were successfully mapped using the bitr function above
+linked_gene_list_A1_sorted_kegg = linked_gene_list_A1_sorted[names(linked_gene_list_A1_sorted) %in% dedup_ids$SYMBOL]
+
+linked_gene_list_A1_sorted_kegg <- linked_gene_list_A1_sorted_kegg 
+
+# Name vector with ENTREZ ids
+names(linked_gene_list_A1_sorted_kegg) <- dedup_ids$ENTREZID
+
+# sort the list in decreasing order (required for clusterProfiler)
+linked_gene_list_A1_sorted_kegg = sort(linked_gene_list_A1_sorted_kegg, decreasing = TRUE)
+```
+
+### Run KEGG pathway analysis:
+```{r}
+kegg_organism = "hsa"
+linked_gene_list_A1_sorted_kegg_gse <- clusterProfiler::gseKEGG(geneList = linked_gene_list_A1_sorted_kegg,
+               organism     = kegg_organism,
+              # nPerm        = 10000,
+               minGSSize    = 3,
+               maxGSSize    = 800,
+               pvalueCutoff = 0.05,
+               pAdjustMethod = "fdr",
+               keyType       = "ncbi-geneid")
+
+linked_gene_list_A1_sorted_kegg_gse@result
+```
+
+## Make KEGG dotplot
+
+```{r}
+linked_gene_list_A1_sorted_kegg_dotplot <- enrichplot::dotplot(linked_gene_list_A1_sorted_kegg_gse, showCategory = 10, title = "Enriched Pathways" , split=".sign") + facet_grid(.~.sign)
+
+linked_gene_list_A1_sorted_kegg_dotplot
+
+#ggsave("../2_Output/RMA_output/plots/GSEA_plots/linked_gene_list_A1_sorted/linked_gene_list_A1_sorted_kegg_dotplot.png", linked_gene_list_A1_sorted_kegg_dotplot, width = 7, height = 12)
+```
+
+
+# Make a kegg enrichment map of top 10 categories
+```{r, fig.width = 10, fig.height = 10, eval = FALSE}
+
+# Calculate term similarity matrix
+term_sim_matrix <- enrichplot::pairwise_termsim(linked_gene_list_A1_sorted_kegg_gse)
+
+# Visualize enrichment results with the term similarity matrix
+linked_gene_list_A1_sorted_kegg_emapplot <- enrichplot::emapplot(term_sim_matrix, showCategory = 10)
+linked_gene_list_A1_sorted_kegg_emapplot
+
+# Save the plot
+#ggsave("../2_Output/RMA_output/plots/GSEA_plots/linked_gene_list_A1_sorted/linked_gene_list_A1_sorted_kegg_emap.png", linked_gene_list_A1_sorted_kegg_emapplot, width = 10, height = 10)
+## Make a kegg category netplot
+```
+
+
+
+```{r, fig.width = 15, fig.height = 10, eval = FALSE}
+# categorySize can be either 'pvalue' or 'geneNum'
+linked_gene_list_A1_sorted_kegg_netplot <- enrichplot::cnetplot(linked_gene_list_A1_sorted_kegg_gse, categorySize="pvalue", foldChange=linked_gene_list_A1_sorted, showCategory = 3)
+
+linked_gene_list_A1_sorted_kegg_netplot
+
+# Save the plot
+#ggsave("../2_Output/RMA_output/plots/GSEA_plots/linked_gene_list_A1_sorted/linked_gene_list_A1_sorted_kegg_cnet.png", linked_gene_list_A1_sorted_kegg_netplot, width = 15, height = 10)
+
+```
+
+### Make a kegg ridgeplot
+```{r, fig.width = 20, fig.height = 15, eval = FALSE}
+
+## Make a ridgeplot
+linked_gene_list_A1_sorted_kegg_ridgeplot<- enrichplot::ridgeplot(linked_gene_list_A1_sorted_kegg_gse) + labs(x = "enrichment distribution")
+
+linked_gene_list_A1_sorted_kegg_ridgeplot
+
+# Save the plot
+#ggsave("../2_Output/RMA_output/plots/GSEA_plots/linked_gene_list_A1_sorted/linked_gene_list_A1_sorted_kegg_ridgeplot.png", linked_gene_list_A1_sorted_kegg_ridgeplot, width = 20, height = 15)
+
+```
+

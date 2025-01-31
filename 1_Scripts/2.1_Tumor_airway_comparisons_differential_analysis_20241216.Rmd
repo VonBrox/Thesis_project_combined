@@ -13,11 +13,10 @@ This script will include all steps in the "main pipeline" part of my thesis proj
 Notes: 
 - 2024/12/04: For this version of the pipeline, I am using limma for A1, DESeq2 for T-E, and limma for T-M, which uses the cbioportal-derived data. I have gathered that the Wilcoxon signed-rank test is better for smaller sample sizes (I can back this up with sources later). I am also experimenting with applying stringent FDR cutoffs and applying log2FC cutoffs based on how they affect the histograms of expression distribution (keeping the more normally distributed bits). Down the line I may want to use the probewise processing of T-M instead of the cbioportal version, as they do not provide a good explanation of their preprocessing.
 
-- For A1 I use log2 normalization, batch correction for submission date, and correction for unknown source of variation (using ComBat)
+- For A1 I use series matrices with RMA normalization as preprocessing, then do log2 normalization, batch correction for submission date, and correction for unknown source of variation (using ComBat)
 - For T-E I remove an outlier tumor-normal pair
 - For T-M I convert to M values
 - For A2 I do quantile normalization
-
 
 # Loading libraries
 ```{r}
@@ -63,29 +62,91 @@ gset <- gset[ ,sel]
 gset <- gset[complete.cases(exprs(gset)), ] # skip missing values
 length(sml) # 182 samples
 
+# assign samples to groups and set up design matrix
+gs <- factor(sml)
+groups <- make.names(c("Non-smoker","Smoker"))
+levels(gs) <- groups
+gset$group <- gs
+
 ```
 
 ## 1.2 Quality control checks and normalization 
 ```{r}
 
 ## Make histograms and boxplots to check if the data is log-transformed and needs quantile normalization ##
-hist(as.matrix(exprs(gset))) # skewed left, needs log2 transform
-boxplot(exprs(gset)) # scary-looking
+
+## Histogram ##
+png("../2_Outputs/7_Figures/A1_histogram_prenorm.png", width = 2000, height = 1500, res = 300)
+hist(as.matrix(exprs(gset)),
+     main = "GSE63127 overall distribution of expression values",
+     xlab = "RMA normalized probe intensity",
+     ylab = "Frequency") # skewed left, needs log2 transform
+dev.off()
+
+# boxplot(exprs(gset),
+#         ) # scary-looking
+
+# It takes up lots of computation so commenting out for now
 max(exprs(gset))
 min(exprs(gset))
+
 # Should do log2 normalization
 
 ## log2 normalization ##
 exprs(gset) <- log2(exprs(gset)+1)
 
 # quantile normalization: no longer doing this for now to better capture variation
-##exprs(gset) <- normalizeBetweenArrays(exprs(gset)) 
+## exprs(gset) <- normalizeBetweenArrays(exprs(gset)) 
+
+png("../2_Outputs/7_Figures/A1_histogram_postnorm.png", width = 2000, height = 1500, res = 300)
+hist(as.matrix(exprs(gset)), 
+     main = "GSE63127 distribution of expression values",
+     xlab = "RMA and log2 normalized probe intensity",
+     ylab = "Frequency") # much better
+dev.off()
+
+# expression value distribution
+par(mar=c(4,4,2,1))
+title <- paste ("GSE63127", "/", annotation(gset), " value distribution", sep ="")
+plotDensities(exprs(gset), group=gs, main=title, legend ="topright")
 
 
-hist(as.matrix(exprs(gset))) # much better
-boxplot(exprs(gset)) # Looks reasonable
-min(exprs(gset)) 
-max(exprs(gset)) 
+
+### Generate a boxplot ###
+
+ex <- exprs(gset)
+ord <- order(gs)  # order samples by group
+
+# Set up PNG device with high resolution
+png("../2_Outputs/7_Figures/A1_boxplot.png", width = 2000, height = 1500, res = 300)
+palette(
+  c("#7570B3", "#1B9E77")
+  )
+par(mar=c(7,4,2,1))
+title <- "GSE63127 sample-wise distribution of expression values"
+boxplot(ex[,ord], boxwex=0.6, notch=T,  outline=FALSE, las=2, col=gs[ord],
+        main=title, 
+        #xlab = "Samples", 
+        ylab = "RMA and log2 normalized probe intensity",
+        xaxt="n",
+        whisklty = 0,
+        #border = gs[ord]
+        lwd = 0.8,
+        space = -1
+        )
+# Add custom x-axis without sample labels
+#axis(1, at=seq_along(colnames(ex)), labels=FALSE)  # Draw ticks without labels
+# Add axis labels for clarification
+mtext("Samples", side=1, line=2)  # Add "Samples" as the x-axis label
+# Add legend
+legend("bottomleft", inset=c(0, -0.3), fill=palette(), legend=groups, 
+       bty="n", xpd=TRUE)  # Adjust inset and allow drawing outside plot area
+# Close the PNG device
+dev.off()
+
+
+min(exprs(gset))
+max(exprs(gset))
 
 ```
 
@@ -93,11 +154,6 @@ max(exprs(gset))
 
 ### 1.3.1: Download and clean up the phenotypic information table from the dataset
 ```{r}
-# assign samples to groups and set up design matrix
-gs <- factor(sml)
-groups <- make.names(c("non-smoker","smoker"))
-levels(gs) <- groups
-gset$group <- gs
 
 phenotypic_data <- pData(gset)  # Extract phenotypic data
 head(phenotypic_data, n = 3)
@@ -279,7 +335,7 @@ head(phenotypic_data, n = 3)
 
 # assign samples to groups and set up design matrix
 gs <- factor(sml)
-groups <- make.names(c("non-smoker","smoker"))
+groups <- make.names(c("Non-smoker","Smoker"))
 levels(gs) <- groups
 gset$group <- gs
 
@@ -289,13 +345,18 @@ colz <- as.numeric(as.factor(gs)) # Get color values from group
 
 plotMDS(exprs(gset),
         gene.selection = "common",
-        main = "PCA for CS vs NS GSE63127",
+       # main = "PCA for CS vs NS GSE63127",
         col = colz,
         pch = 1
 )
-legend("bottom", legend = levels(as.factor(gs)), 
-       fill = unique(colz), 
-       title = "Smoking status")
+legend("bottom", 
+       legend = c("Smoker", "Non-smoker"), 
+       col = c("#7570B3", "#1B9E77"), # Colors: only for smoking status
+       pch = c(15, 15),                   # Shapes: 2 = triangle, 1 = circle
+       pt.cex = c(1, 1),             # Adjust size for better visibility
+       text.col = "black",                     # Text color
+#       bty = "n"
+       )                              # Box type: 'n' removes border
         
 ## We have 4 definite clusters that are not based on smoking status. 
 ## As such, it is a good idea to check the table of sample phenotypic information to look for sources of variation between samples.
@@ -306,20 +367,22 @@ pointz <- as.numeric(as.factor(phenotypic_data$submission_date<= "2010-06-03")) 
 ## Plot PCA with date information##
 plotMDS(exprs(gset),
         gene.selection = "common",
-        main = "PCA for CS vs NS GSE63127",
+       # main = "PCA for CS vs NS GSE63127",
         col = colz, # Colors smokers red and nonsmokers black
         pch = pointz
         #labels = gset$group
 )
 legend("bottom", 
-       legend = c("Smoker", "Non-mokers", 
+       legend = c("Smoker", "Non-smoker", 
                   "2010 and Prior", "Post-2010"), 
-       col = c("red", "black", "black", "black"), # Colors: only for smoking status
+       col = c("#7570B3", "#1B9E77", "black", "black"), # Colors: only for smoking status
        pch = c(15, 15, 2, 1),                   # Shapes: 2 = triangle, 1 = circle
        pt.cex = c(1, 1, 1, 1),             # Adjust size for better visibility
        text.col = "black",                     # Text color
 #       bty = "n"
        )                              # Box type: 'n' removes border
+
+
 # Clearly the source of batch effect in PC1 is submission date post-2010.
 # Note: I found that the split was at 2010 by doing a bit of playing around with other clustering methods, not shown here.
 
@@ -336,30 +399,31 @@ exprs_matrix_combat <- ComBat(dat=exprs(gset), batch=submission_post_2010_batch,
 ## Plot PCA for expression values after first batch correction ##
 date_corrected_PCA <- plotMDS(exprs_matrix_combat,
         gene.selection = "common",
-        main = "PCA for CS vs NS GSE63127, corrected for submission date",
+       # main = "PCA for CS vs NS GSE63127, corrected for submission date",
         col = colz, # Colors smokers red and nonsmokers black
         pch = pointz
 
 )
 legend("bottom",
-       legend = c("Smoker", "Non-smoker"),
-       col = c("red", "black"),
-       pch = c(15, 15)
+legend = c("Smoker", "Non-smoker", 
+                  "2010 and Prior", "Post-2010"), 
+       col = c("#7570B3", "#1B9E77", "black", "black"), # Colors: only for smoking status
+       pch = c(15, 15, 2, 1)
        #title = "Smoking status"
        )
 
 ## Some evidence that second source of variation could be due to sex (but only 11/182 samples have sex labels):
 plotMDS(exprs_matrix_combat,
         gene.selection = "common",
-        main = "PCA for CS vs NS GSE63127, corrected for submission date",
+       # main = "PCA for CS vs NS GSE63127, corrected for submission date",
         col = colz, # Colors smokers red and nonsmokers black
         #pch = pointz2 # Using separate shapes for all submission dates
         labels = phenotypic_data$sex
 )
 legend("bottom",
-       legend = c("M = Male", "F = Female", "Smoker", "Non-smoker"),
-       col = c("black", "black", "red", "black"),
-       pch = c(NA, NA, 15, 15)
+       legend = c("Smoker", "Non-smoker", "M = Male", "F = Female"),
+       col = c("#7570B3", "#1B9E77", "black", "black"),
+       pch = c(15, 15, NA, NA)
        #title = "Smoking status"
        )
 
@@ -376,7 +440,7 @@ exprs_matrix_combat_2 <- ComBat(dat=exprs_matrix_combat, batch=unknown_batch_lab
 # View PCA plot
 plotMDS(exprs_matrix_combat_2,
         gene.selection = "common",
-        main = "PCA for CS vs NS GSE63127 after 2 ComBat corrections",
+        main = "PCA for CS vs NS GSE63127 after second correction",
         col = colz, # Colors smokers red and nonsmokers black
         pch = pointz
         #labels = gset$group
@@ -384,7 +448,7 @@ plotMDS(exprs_matrix_combat_2,
 legend("topleft", 
        legend = c("Smoker", "Non-smoker", 
                   "2010 and Prior", "Post-2010"), 
-       col = c("red", "black", "black", "black"), # Colors: only for smoking status
+       col = c("#7570B3", "#1B9E77", "black", "black"), # Colors: only for smoking status
        pch = c(15, 15, 2, 1),                   # Shapes: 2 = triangle, 1 = circle
        pt.cex = c(1, 1, 1, 1),             # Adjust size for better visibility
        text.col = "black",                     # Text color
@@ -392,6 +456,9 @@ legend("topleft",
        )  
 
 ## Now PC1 corresponds quite well to smoking status after the two ComBat corrections.
+
+
+### 2024/12/13 NOTE: Maybe I should be using SVA as a correction for the unknown source of variation rather than ComBat since this is not really a batch effect?
 
 
 ```
@@ -455,8 +522,8 @@ nrow(GSE63127_CS_NS_limma)
 ## 1.8 Visualization of DEGs (volcano plot)
 ```{r, fig.width=10, fig.height=8}
 
-FDR_cutoff_A1 <- 0.001
-log2FC_cutoff_A1 <- 0.5
+FDR_cutoff_A1 <- 0.01
+log2FC_cutoff_A1 <- 0.25
 
 v_A1 <- EnhancedVolcano::EnhancedVolcano(
   toptable = GSE63127_CS_NS_limma,
@@ -471,9 +538,10 @@ v_A1 <- EnhancedVolcano::EnhancedVolcano(
   caption = paste0("Total = ", nrow(GSE63127_CS_NS_limma[abs(GSE63127_CS_NS_limma$logFC)>log2FC_cutoff_A1 &  GSE63127_CS_NS_limma$adj.P.Val < FDR_cutoff_A1,]), " significant DEGs meeting cutoffs"),
   col = c("grey30", "mediumpurple2", "royalblue", "orange2"),
   legendPosition = "bottom",
-  labSize = 4,
-  max.overlaps = 5,
+  labSize = 3,
+  max.overlaps = 3,
   drawConnectors = TRUE,
+  widthConnectors = 0.3,
   arrowheads = FALSE,
   pCutoff = FDR_cutoff_A1,
   FCcutoff = log2FC_cutoff_A1,
@@ -490,7 +558,7 @@ v_A1
 ```{r}
 
 # Change date suffix as appropriate if changes are made
-#write.table(GSE63127_CS_NS_limma, "../2_Outputs/GSE63127_CS_NS_limma_20241204.txt", sep = '\t')
+#write.table(GSE63127_CS_NS_limma, "../2_Outputs/1_Airway_DEGs/GSE63127_CS_NS_limma_20241204.txt", sep = '\t')
 
 ```
 
@@ -622,11 +690,15 @@ hist(log2(as.matrix(counts_matched_T_NM))) # Still not normal at all
 # hist(log2(as.matrix(counts_matched_NM))) # Equally bad distribution, why is it the same though????
 
 
-boxplot(counts_matched_T_NM) # Boxplots for all counts looks crazy, but apparently this is common in RNAseq data and is accounted for by DESeq2 by a size faxctor approach (can back up later with a source)
+#boxplot(counts_matched_T_NM) # Commenting out due to computation time
+
+# Boxplots for all counts looks crazy, but apparently this is common in RNAseq data and is accounted for by DESeq2 by a size faxctor approach (can back up later with a source)
 
 
 ## PCA to check for tumor-normal separation
-colz <- as.numeric(as.factor(rep(c(1,0), length(counts_matched_T_NM)/2))) # Get color values from group
+#colz <- as.numeric(as.factor(rep(c(1,0), length(counts_matched_T_NM)/2))) # Get color values from group
+colz <- rep(c("firebrick2","black"), length(counts_matched_T_NM)/2 ) # Get color values from group
+
 plotMDS(counts_matched_T_NM,
         gene.selection = "common",
         main = "PCA for TCGA-LUAD expression",
@@ -635,7 +707,7 @@ plotMDS(counts_matched_T_NM,
 )
 legend("bottomleft", 
        legend = c("Tumor", "Normal"), 
-       col = c("red", "black"), # Colors: only for smoking status
+       col = c("firebrick2", "black"), 
        pch = c(15, 15),                
        text.col = "black"
        )  
@@ -645,12 +717,12 @@ legend("bottomleft",
 plotMDS(counts_matched_T_NM,
         gene.selection = "common",
         main = "PCA for TCGA-LUAD expression",
-        col = colz
+         col = colz  
         #pch = 1
 )
 legend("bottomleft", 
        legend = c("Tumor", "Normal"), 
-       col = c("red", "black"), # Colors: only for smoking status
+       col = c("firebrick2", "black"), # Colors: only for smoking status
        pch = c(15, 15),                
        text.col = "black"
        )  
@@ -782,7 +854,7 @@ TE_T_NM_DEseq2_DEGs <- res_table
 ## 2.4 Visualization of DEGs from DESEq2 calculation (volcano plot)
 ```{r, fig.width=10, fig.height=6}
 
-log2FC_cutoff_TE <- 1.5
+log2FC_cutoff_TE <- 0.75
 FDR_cutoff_TE <- 0.001
 
 v_TE <- EnhancedVolcano::EnhancedVolcano(
@@ -801,12 +873,13 @@ v_TE <- EnhancedVolcano::EnhancedVolcano(
   labSize = 3,
   max.overlaps = 10,
   drawConnectors = TRUE,
+  widthConnectors = 0.3,
   arrowheads = FALSE,
   pCutoff = FDR_cutoff_TE,
   FCcutoff = log2FC_cutoff_TE,
   gridlines.minor = FALSE,
   gridlines.major = FALSE,
-  #xlim = c(-3, 6)
+  xlim = c(-3, 5),
   ylim = c(0,10)
 )
 
@@ -826,12 +899,14 @@ library(ggvenn)
 
 # Define the gene lists in a named list
 gene_lists <- list(
-  "DESeq2_list" = DESeq2_list,
-  "signed_rank_list" = signed_rank_list
+  "DESeq2" = DESeq2_list,
+  "Signed rank" = signed_rank_list
 )
 
 # Create the Venn diagram
-ggvenn::ggvenn(gene_lists, fill_color = c("blue", "red"))
+ggvenn::ggvenn(gene_lists,
+               fill_color = c("white", "white"), 
+               auto_scale = T)
 
 ## ~80% agreement between the lists is really good. Since there is better justification for using DESeq2, I should probably use that one.
 ```
@@ -928,7 +1003,7 @@ data_methylation_hm450_tumor_normal_matched <- data_methylation_hm450_tumor_norm
 ## 3.3 Quality control checks and conversion to M values for differential analysis
 ```{r}
 
-hist(as.matrix(data_methylation_hm450_tumor_normal_matched))
+hist(as.matrix(data_methylation_hm450_tumor_normal_matched), breaks = 75)
 boxplot(data_methylation_hm450_tumor_normal_matched)
 max(!is.na(data_methylation_hm450_tumor[3:length(data_methylation_hm450_tumor_normal_matched)]))
 min(!is.na(data_methylation_hm450_tumor[3:length(data_methylation_hm450_tumor_normal_matched)]))
@@ -941,7 +1016,18 @@ min(!is.na(data_methylation_hm450_tumor[3:length(data_methylation_hm450_tumor_no
 methyl_beta <- data_methylation_hm450_tumor_normal_matched
 # Convert to M values
 methyl_M=log2(data_methylation_hm450_tumor_normal_matched/(1-data_methylation_hm450_tumor_normal_matched))
-hist(as.matrix(methyl_M), breaks = 100) ## Closer to normal distribution though still definitely not a perfect one
+
+## Plot a histograk of the M values
+hist(as.matrix(methyl_M),
+     main = "Distribution of M-values in TCGA-LUAD methylation",
+     xlab = "M-value",
+     breaks = 75) ## Closer to normal distribution though still definitely not a perfect one
+
+## Plot the expression distribution of the individual samples
+title <- "TCGA-LUAD methylation value distribution"
+colz <- rep(c("Tumor","Normal"), length(methyl_M)/2)
+plotDensities(as.matrix(methyl_M), group=colz, main=title, legend ="topright", col = c("darkolivegreen3","brown2"))
+
 
 ### PCA checks ###
 
@@ -949,7 +1035,7 @@ hist(as.matrix(methyl_M), breaks = 100) ## Closer to normal distribution though 
 colz <- rep(c("red","black"), length(methyl_M)/2) # Get color values from T or NM group
 plotMDS(methyl_M,
         gene.selection = "common",
-        main = "PCA for TCGA-LUAD methylation T-NM matched",
+        main = "PCA for TCGA-LUAD methylation data",
         col = colz,
         pch = 1
 )
@@ -966,7 +1052,7 @@ legend("bottomleft",
 
 ```
 
-## 3.4 Differential expression analysis using limma
+## 3.4 Differential methylation analysis using limma
 ```{r}
 
 # Create a design matrix
@@ -1005,6 +1091,40 @@ nrow(TCGA_LUAD_limma_DMG)
 
 ```
 
+## 3.5 Visualization of DMGs (volcano plot)
+```{r, fig.width=10, fig.height=6}
+
+log2FC_cutoff_TM <- 0.25
+FDR_cutoff_TM <- 0.01
+
+v_TM <- EnhancedVolcano::EnhancedVolcano(
+  toptable = TCGA_LUAD_limma_DMG,
+  lab = TCGA_LUAD_limma_DMG$Gene,
+  x = "log2FC",
+  y = "FDR", 
+ # pCutoffCol = 'min_smoothed_fdr',
+  xlab = "log2FC",
+  ylab = "-log10(FDR)",
+  title = "TM DMGs",
+  subtitle = paste0("log2FC cutoff: ", log2FC_cutoff_TM, "   FDR cutoff: ", FDR_cutoff_TM),
+  caption = paste0("Total = ", nrow(TCGA_LUAD_limma_DMG[abs(TCGA_LUAD_limma_DMG$log2FC)>log2FC_cutoff_TM & TCGA_LUAD_limma_DMG$FDR < FDR_cutoff_TM,]), " significant DMGs meeting cutoffs"),
+  col = c("grey30", "mediumpurple2", "royalblue", "orange2"),
+  legendPosition = "bottom",
+  labSize = 3,
+  max.overlaps = 10,
+  drawConnectors = TRUE,
+  widthConnectors = 0.3,
+  arrowheads = FALSE,
+  pCutoff = FDR_cutoff_TE,
+  FCcutoff = log2FC_cutoff_TE,
+  gridlines.minor = FALSE,
+  gridlines.major = FALSE,
+  xlim = c(-3, 3),
+  ylim = c(0,10)
+)
+
+v_TM
+```
 
 ## 3.5 Extra check of the wilcoxon signed-rank output compared with the limma output for T-M
 ```{r}
@@ -1020,12 +1140,12 @@ library(ggvenn)
 
 # Define the gene lists in a named list
 gene_lists <- list(
-  "limma_list" = limma_list,
-  "signed_rank_list" = signed_rank_list
+  "limma" = limma_list,
+  "signed rank" = signed_rank_list
 )
 
 # Create the Venn diagram
-ggvenn::ggvenn(gene_lists, fill_color = c("blue", "red"))
+ggvenn::ggvenn(gene_lists, fill_color = c("blue", "red"), auto_scale = T)
 
 # 75% agreement seems pretty good
 
@@ -1084,8 +1204,10 @@ hist(as.matrix(exprs(gset))) # Values range 1-15, and 1 big peak around 3.
 boxplot(exprs(gset)) # Same range of values, with similar-looking ranges, but not exactly the same
 # Narrow range, therefore no log2 normalization needed
 
-exprs(gset) <- normalizeBetweenArrays(exprs(gset))
-boxplot(exprs(gset))
+## Going to try this again without the quantile to see what happens
+
+# exprs(gset) <- normalizeBetweenArrays(exprs(gset))
+# boxplot(exprs(gset))
 # 2024/11/12: I elected to do quantile normalization because this gave me a larger list of "persistent" genes. Could justify that it "better captures the variation between groups" etc
 
 min(exprs(gset))
@@ -1312,7 +1434,7 @@ GSE7895_persistent_DEGs <- tT_persistent %>%
   dplyr::rename(., Gene = Gene.symbol, CS_NS_A2 = CS_vs_NS, FS_NS_A2 = FS_vs_NS, CS_FS_A2 = CS_vs_FS, FDR_A2 = adj.P.Val)
 
 # Save output
-#write.table(GSE7895_persistent_DEGs, "../2_Outputs/1_Airway_DEGs/GSE7895_persistent_DEGs_20241204.txt")
+#write.table(GSE7895_persistent_DEGs, "../2_Outputs/1_Airway_DEGs/GSE7895_persistent_DEGs_no_quantile_20241216.txt")
 
 ```
 
