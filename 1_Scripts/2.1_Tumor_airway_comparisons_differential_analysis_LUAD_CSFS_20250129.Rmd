@@ -884,7 +884,7 @@ gene_info_sorted <- gene_info %>%
 TCGA_LUAD_limma_DEG$Gene <- gene_info_sorted$gene_name
 
 # Save output
-#write.table(TCGA_LUAD_limma_DEG, "../2_Outputs/4_Tumor_DEGs/TCGA_LUAD_limma_DEG_20250129.txt", sep = '\t')
+#write.table(TCGA_LUAD_limma_DEG, "../2_Outputs/4_Tumor_DEGs/TCGA_LUAD_limma_DEG_CSFS_20250129.txt", sep = '\t')
 
 ```
 

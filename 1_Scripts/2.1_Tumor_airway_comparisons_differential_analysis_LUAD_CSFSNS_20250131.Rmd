@@ -598,7 +598,7 @@ library(TCGAbiolinks)
 library(SummarizedExperiment)
 library(dplyr)
 
-query <- GDCquery(project = "TCGA-LUSC",
+query <- GDCquery(project = "TCGA-LUAD",
                   data.category = "Transcriptome Profiling",
                   data.type = "Gene Expression Quantification",
                   sample.type = c("Primary Tumor", "Solid Tissue Normal"),
@@ -615,7 +615,7 @@ data <- GDCprepare(query)
 ```{r message=FALSE, warning=FALSE, results='hide'}
 
 query_clinical <- GDCquery(
-  project = "TCGA-LUSC",
+  project = "TCGA-LUAD",
   data.category = "Clinical",
   data.type = "Clinical Supplement"
 )
@@ -636,7 +636,7 @@ head(clinical_data)
 ```
 
 
-## 2.1.2 Formatting as tumor-normal pairs, removing never-smoker samples
+## 2.1.2 Formatting as tumor-normal pairs, in this case NOT removing never-smoker samples, as a comparison
 ```{r}
 counts <- as.data.frame(assay(data))  # Extracting the count matrix (these are supposedly raw counts)
 #head(counts)  # Viewing the first few rows (genes) and columns (samples)
@@ -650,35 +650,39 @@ sample_info <- as.data.frame(colData(data))
 table(sample_info$sample_type)  # Summarize sample types (Tumor vs. Normal)
 
 # Extract just the normal sample info
-sample_info_normal <- sample_info[sample_info$definition=="Solid Tissue Normal",] %>%
-    filter (tissue_or_organ_of_origin != "Blood")# Remove the weird leukemia blood sample.
+sample_info_normal <- sample_info[sample_info$definition=="Solid Tissue Normal",]
 
 # Look for tumor samples with normal matches from same patients
 sample_info_tumor <- sample_info %>%
   filter(patient %in% sample_info_normal$patient) %>%
-  filter(definition == "Primary solid Tumor") %>%
-  filter (tissue_or_organ_of_origin != "Blood")# Remove the weird leukemia blood sample.
+  filter(definition == "Primary solid Tumor")
 
+# The tumor list is longer -- check out duplicate patient IDs in this list
+sample_info_tumor_dups <- sample_info_tumor %>%
+  group_by(patient) %>%
+  filter(n() > 1) %>%
+  ungroup()
+
+unique(sample_info_tumor_dups$patient) # There are 6 patients with multiple tumor samples
+sample_info_tumor_dups_FFPE <- sample_info_tumor_dups[sample_info_tumor_dups$is_ffpe,] # OK the difference is the FFPE status.
+# It seems these are the only 6 patients in the group who have FFPE samples available.
+
+# I guess I will make the decision to keep the 6 FFPE samples regardless. Not sure if that's the right choice but I'll do it for now.
+
+# Get the non-FFPE duplicate patient sample info
+sample_info_tumor_dups_non_FFPE <- sample_info_tumor_dups[!sample_info_tumor_dups$is_ffpe,]
+# Remove these IDs from the main tumor sample info
+sample_info_tumor <- sample_info_tumor %>% filter(! barcode %in% sample_info_tumor_dups_non_FFPE$barcode)
+
+# There is 1 normal sample with no matching tumor sample it seems, so remove that
+sample_info_normal <- sample_info_normal %>% filter(patient != "TCGA-44-6144")
 
 # Make the matched tumor-normal sample table
 sample_info_matched_T_NM <- rbind(sample_info_tumor, sample_info_normal)[order(c(seq_len(nrow(sample_info_tumor)), seq_len(nrow(sample_info_normal)))), ]
-
 sample_info_matched_T_NM <- sample_info_matched_T_NM %>% 
   dplyr::select(-treatments) %>% # Removing treatments column since it is in the form of a list and has no info
   arrange(., sample_type_id) %>% # First sort by tumor vs normal
   arrange(., patient) # arrange by patient to get the tumor normal pairs
-
-
-### Remove never smoker samples from the sample info table ###
-
-# A tobacco history label of 1 corresponds to never smokers: https://pmc.ncbi.nlm.nih.gov/articles/PMC7427766/
-
-# Merge the clinical sample table with tobacco smoking history from clinical table and remove never smokers
-sample_info_matched_T_NM <- sample_info_matched_T_NM %>%
-  left_join(., clinical_data %>% select( "bcr_patient_barcode", "tobacco_smoking_history"), by = c("patient"= "bcr_patient_barcode")) 
-
-#There are no never-smokers in the cohort (none have smoking status of 1)
-
 
 ### Modify the counts table for tumor-normal matched data ###
 
@@ -726,7 +730,7 @@ colz <- rep(c("firebrick2","black"), length(counts_matched_T_NM)/2 ) # Get color
 
 plotMDS(counts_matched_T_NM,
         gene.selection = "common",
-        main = "PCA for TCGA-LUSC expression",
+        main = "PCA for TCGA-LUAD expression",
         col = colz,
         pch = 1
 )
@@ -741,7 +745,7 @@ legend("bottomleft",
 # To find the outlier, plotting PCA with sample names
 plotMDS(counts_matched_T_NM,
         gene.selection = "common",
-        main = "PCA for TCGA-LUSC expression",
+        main = "PCA for TCGA-LUAD expression",
          col = colz  
         #pch = 1
 )
@@ -752,30 +756,33 @@ legend("bottomleft",
        text.col = "black"
        )  
 
+# Checking out this outlier, TCGA-38-4626-01A
+hist(log2(counts_matched_T_NM$`TCGA-38-4626-01A`)) # Not obvious why it's an outlier, but must somehow be really normal-like?
+
 ##  Making a dendrogram to see if the same outlier is found
 sample_dist <- dist(t(counts_matched_T_NM))  # Transpose the matrix to calculate distances between samples
 hc <- hclust(sample_dist) #Perform hierarchical clustering
 plot(hc, main = "Dendrogram of Samples", xlab = "", sub = "", cex = 0.8) # Plot the dendrogram
 
 
-
-
-
 ```
 
 ## 2.2.2 Acting on quality control checks: Remove outlier and its pair
 ```{r}
-## It appears that an outlier candidate is TCGA-56-8623-01A
-## There may be others, I also don't see this on a blacklist when I search for it, but I will elect to remove it and its pair
+# Remove the 1 most obvious outlier and its pair:
 
+# TCGA-38-4626-01A, TCGA-38-4626-11A
 
-counts_matched_T_NM <- counts_matched_T_NM %>% dplyr::select(-c("TCGA-56-8623-01A","TCGA-56-8623-11A"))
+counts_matched_T_NM <- counts_matched_T_NM %>% dplyr::select(-c("TCGA-38-4626-01A","TCGA-38-4626-11A"))
+
+# counts_matched_T_NM <- counts_matched_T_NM %>% dplyr::select(-c("TCGA.38.4626.01A","TCGA.38.4626.11A"))
+# Version after reading it in
 
 ## PCA to check for tumor-normal separation with outlier removed
 colz2 <- as.numeric(as.factor(rep(c(0,1), length(counts_matched_T_NM)/2))) # Get color values from group
 plotMDS(counts_matched_T_NM,
         gene.selection = "common",
-        main = "PCA for TCGA-LUSC expression after outlier removal",
+        main = "PCA for TCGA-LUAD expression after outlier removal",
         col = colz2,
         pch = 1
 )
@@ -845,27 +852,28 @@ fit2 <- eBayes(fit2)
 tT <- topTable(fit2, adjust = "BH", number = Inf)
 
 # Giving more descriptive name and colnames to list
-TCGA_LUSC_DEG <- tT
-TCGA_LUSC_DEG$Gene <- rownames(TCGA_LUSC_DEG)
-rownames(TCGA_LUSC_DEG) <- NULL
-TCGA_LUSC_DEG <- TCGA_LUSC_DEG %>%
+TCGA_LUAD_DEG <- tT
+TCGA_LUAD_DEG$Gene <- rownames(TCGA_LUAD_DEG)
+rownames(TCGA_LUAD_DEG) <- NULL
+TCGA_LUAD_DEG <- TCGA_LUAD_DEG %>%
   dplyr::select(., Gene, logFC, adj.P.Val) %>%
   dplyr::rename(., log2FC = logFC, FDR = adj.P.Val)
 
 # Giving a yet more descriptive name
-TCGA_LUSC_limma_DEG <- TCGA_LUSC_DEG
+TCGA_LUAD_limma_DEG <- TCGA_LUAD_DEG
+
 
 
 ### Replace ensembl IDs with gene names
-TCGA_LUSC_limma_DEG <- TCGA_LUSC_limma_DEG %>% arrange(., rownames(.))
+TCGA_LUAD_limma_DEG <- TCGA_LUAD_limma_DEG %>% arrange(., rownames(.))
 gene_info_sorted <- gene_info %>% 
   arrange(., gene_id) %>%
-  filter(gene_id %in% TCGA_LUSC_limma_DEG$Gene)
+  filter(gene_id %in% TCGA_LUAD_limma_DEG$Gene)
 
-TCGA_LUSC_limma_DEG$Gene <- gene_info_sorted$gene_name
+TCGA_LUAD_limma_DEG$Gene <- gene_info_sorted$gene_name
 
 # Save output
-#write.table(TCGA_LUSC_limma_DEG, "../2_Outputs/4_Tumor_DEGs/TCGA_LUSC_limma_DEG_20250130.txt", sep = '\t')
+write.table(TCGA_LUAD_limma_DEG, "../2_Outputs/4_Tumor_DEGs/TCGA_LUAD_limma_DEG_CSFSNS_20250131.txt", sep = '\t')
 
 ```
 
@@ -874,12 +882,12 @@ TCGA_LUSC_limma_DEG$Gene <- gene_info_sorted$gene_name
 
 ```{r, fig.width=10, fig.height=6}
 
-log2FC_cutoff_TE <- 1.5
+log2FC_cutoff_TE <- 1
 FDR_cutoff_TE <- 0.001
 
 v_TE <- EnhancedVolcano::EnhancedVolcano(
-  toptable = TCGA_LUSC_limma_DEG,
-  lab = TCGA_LUSC_limma_DEG$Gene,
+  toptable = TCGA_LUAD_limma_DEG,
+  lab = TCGA_LUAD_limma_DEG$Gene,
   x = "log2FC",
   y = "FDR", 
  # pCutoffCol = 'min_smoothed_fdr',
@@ -887,7 +895,7 @@ v_TE <- EnhancedVolcano::EnhancedVolcano(
   ylab = "-log10(FDR)",
   title = "TE DEGs",
   subtitle = paste0("log2FC cutoff: ", log2FC_cutoff_TE, "   FDR cutoff: ", FDR_cutoff_TE),
-  caption = paste0("Total = ", nrow(TCGA_LUSC_limma_DEG[abs(TCGA_LUSC_limma_DEG$log2FC)>log2FC_cutoff_TE & TCGA_LUSC_limma_DEG$FDR < FDR_cutoff_TE,]), " significant DEGs meeting cutoffs"),
+  caption = paste0("Total = ", nrow(TCGA_LUAD_limma_DEG[abs(TCGA_LUAD_limma_DEG$log2FC)>log2FC_cutoff_TE & TCGA_LUAD_limma_DEG$FDR < FDR_cutoff_TE,]), " significant DEGs meeting cutoffs"),
   col = c("grey30", "mediumpurple2", "royalblue", "orange2"),
   legendPosition = "bottom",
   labSize = 3,
@@ -905,6 +913,32 @@ v_TE <- EnhancedVolcano::EnhancedVolcano(
 
 v_TE
 ```
+
+
+### 2025/01/31: Comparing what I got this way with what I got after removing never smokers, both times using limma.
+```{r}
+library(ggplot2)
+
+TCGA_LUAD_limma_DEG_CSFSNS <- TCGA_LUAD_limma_DEG
+TCGA_LUAD_limma_DEG_CSFS <- read.table("../2_Outputs/4_Tumor_DEGs/TCGA_LUAD_limma_DEG_CSFS_20250129.txt")
+
+TCGA_LUAD_limma_DEG_comparing_CSFS_CSFSNS <- full_join(TCGA_LUAD_limma_DEG_CSFSNS, TCGA_LUAD_limma_DEG_CSFS, by = "Gene", suffix = c("_CSFSNS", "_CSFS"))
+
+# basic scatterplot for FDR > 0.05 genes
+ggplot(TCGA_LUAD_limma_DEG_comparing_CSFS_CSFSNS %>% filter(FDR_CSFSNS >= 0.05) %>% filter (FDR_CSFS >= 0.05), aes(x=log2FC_CSFSNS, y=log2FC_CSFS)) + 
+    geom_point()
+## Wowwee there is not a lot of relationship between signs even. What about lengths?
+
+nrow(TCGA_LUAD_limma_DEG_comparing_CSFS_CSFSNS %>% filter(FDR_CSFSNS >= 0.05))
+nrow(TCGA_LUAD_limma_DEG_comparing_CSFS_CSFSNS %>% filter (FDR_CSFS >= 0.05))
+nrow(TCGA_LUAD_limma_DEG_comparing_CSFS_CSFSNS %>% filter(FDR_CSFSNS >= 0.05) %>% filter (FDR_CSFS >= 0.05))
+nrow(TCGA_LUAD_limma_DEG_comparing_CSFS_CSFSNS %>% filter(FDR_CSFSNS >= 0.05) %>% filter (FDR_CSFS >= 0.05) %>% filter(sign(log2FC_CSFSNS)==sign(log2FC_CSFS)))
+## Wowwee not even a lot of overlap. It is interesting that removing never smokers makes such a big difference actually!
+
+
+```
+
+
 
 ---
 
@@ -926,10 +960,9 @@ I decided I should switch from wilcoxon sign-rank test to limma because this is 
 ## 3.1 Loading dataset downloaded from cbioportal
 ```{r}
 
-data_methylation_hm450_tumor <- read.table("../4_TCGA_data/TCGA_LUSC/data_methylation_hm450_LUSC.txt", header=TRUE, fill=TRUE)
+data_methylation_hm450_tumor <- read.table("../../Former_Smokers_Aim_2/1_TCGA_LUAD_multiomics/0_Unpaired_input_tables/data_methylation_hm450.txt", header=TRUE, fill=TRUE)
 
-
-data_methylation_hm450_normal <- read.table("../4_TCGA_data/TCGA_LUSC/data_methylation_hm450_normals_LUSC.txt", header=TRUE, fill=TRUE)
+data_methylation_hm450_normal <- read.table("../../Former_Smokers_Aim_2/1_TCGA_LUAD_multiomics/0_Unpaired_input_tables/data_methylation_hm450_normals.txt", header=TRUE, fill=TRUE)
 
 ```
 
@@ -943,7 +976,7 @@ allIDs_tumor  <- colnames(data_methylation_hm450_tumor)
 allIDs_normal <- colnames(data_methylation_hm450_normal)
 
 
-## 2025/01/29: Remove never smokers if there are any
+## 2025/01/29: Remove IDs of never smokers
 
 ## Remove suffix from normal IDs and replace . with -
 allIDs_normal_patients <- allIDs_normal %>%
@@ -956,6 +989,7 @@ clinical_data_filtered <- clinical_data %>%
   filter(tobacco_smoking_history != 1) # Remove never smokers
 
 ## Filter out the corresponding IDs from allIDs_normal
+
 allIDs_normal_filtered <- clinical_data_filtered$bcr_patient_barcode%>%
   gsub("-","\\.", .) %>%
   lapply(., function(x) paste0(x, ".11")) %>%
@@ -971,52 +1005,41 @@ data_methylation_hm450_tumor_with_matches <- data_methylation_hm450_tumor %>%
   dplyr::select(any_of(IDs_tumor_with_matches))
 length(data_methylation_hm450_tumor_with_matches)
 
-# Somehow I am losing two samples here. Check which samples those are
-missing_tumor_samples <- IDs_tumor_with_matches[!IDs_tumor_with_matches %in% colnames(data_methylation_hm450_tumor_with_matches)]
-missing_tumor_samples
-# OK, I will remove the corresponding normal IDs from the normals
-
-
 #Make a table of the methylation data for normal samples only with matching tumor data.
+# Note that 3 of the normal samples don't have a matching tumor sample:
+#`TCGA.44.2655.01`, `TCGA.44.2659.01`, and `TCGA.44.2662.01` don't exist.
 data_methylation_hm450_normal_with_matches <- data_methylation_hm450_normal %>%
   dplyr::select(allIDs_normal_filtered) %>%
-  dplyr::select(! c("TCGA.43.3394.11", "TCGA.43.3920.11")) # Remove the samples with no matching tumor sample
+  dplyr::select(-c('TCGA.44.2655.11', 'TCGA.44.2659.11','TCGA.44.2662.11'))
 length(data_methylation_hm450_normal_with_matches)
-
-# There are still 2 more normals than tumors. Check what doesn't match here.
-
 
 #Make a combined table of matched tumor-normal samples.
 data_methylation_hm450_tumor_normal_matched <- cbind(data_methylation_hm450_tumor_with_matches, data_methylation_hm450_normal_with_matches)[order(c(1:length(data_methylation_hm450_tumor_with_matches),1:length(data_methylation_hm450_normal_with_matches)))]
-
-# Adding back gene labels
-data_methylation_hm450_tumor_normal_matched <- cbind(Gene = data_methylation_hm450_tumor$Hugo_Symbol, data_methylation_hm450_tumor_normal_matched) 
+data_methylation_hm450_tumor_normal_matched <- cbind(Gene = data_methylation_hm450_tumor$Hugo_Symbol, data_methylation_hm450_tumor_normal_matched) # Adding back gene labels
 
 ```
 
-### 3.2.2 Handling duplicate genes
+### 3.2.2 Giving suffixes to duplicate genes
 ```{r}
-library(dplyr)
+# I want to make the gene names into row names, but I cannot because some gene names appear twice.
+# So, I will rename them with indexes _1 and _2 and figure out  why they appeared twice later.
 
-# Step 1: Identify rows with duplicate Gene values
-duplicates <- data_methylation_hm450_tumor_normal_matched %>%
-  group_by(Gene) %>%
-  filter(n() > 1)
+#Checking rows of the gene names with duplicates:
+checking_dups <- data_methylation_hm450_tumor_normal_matched[data_methylation_hm450_tumor_normal_matched$Gene %in% c("AGER", "CX3CR1", "F2R", "GADL1", "GCOM1", "KLK10", "PALM2AKAP2", "QSOX1", "RCC1"),]
 
-# Step 2: Remove the row with the smallest row sum for each duplicate gene
-rows_to_remove <- duplicates %>%
-  rowwise() %>%
-  mutate(row_sum = sum(c_across(where(is.numeric)))) %>%  # Compute row sum for numeric columns
-  group_by(Gene) %>%
-  slice_min(row_sum, with_ties = FALSE) %>%  # Select the row with the smallest sum
-  ungroup()
+# I see that these are not identical rows - the methylation values are different. So, I will go ahead and add indexes.
+checking_dups <- checking_dups[order(checking_dups$Gene),]#Sort by gene name
 
-# Step 3: Remove these rows from the original dataframe
-data_methylation_hm450_tumor_normal_matched <- anti_join(data_methylation_hm450_tumor_normal_matched, rows_to_remove, by = colnames(data_methylation_hm450_tumor_normal_matched))
+checking_dups <- cbind(rownames(checking_dups), checking_dups[,1]) #Make table of just the gene names and row names of the original file
 
-# Now make the gene names into row names
-rownames(data_methylation_hm450_tumor_normal_matched) <- data_methylation_hm450_tumor_normal_matched$Gene
-data_methylation_hm450_tumor_normal_matched$Gene <- NULL
+checking_dups[,2] <- paste(checking_dups[,2],1:2,sep="_") # Add a suffix to the gene names
+
+#Replace the gene names in the T-NM matched file with the suffixed gene names
+data_methylation_hm450_tumor_normal_matched[checking_dups[,1],1] <- checking_dups[,2]
+
+#Now that there are no longer duplicates, make the gene names column into the row names and remove the gene names column.
+rownames(data_methylation_hm450_tumor_normal_matched) <- data_methylation_hm450_tumor_normal_matched[,1]
+data_methylation_hm450_tumor_normal_matched <- data_methylation_hm450_tumor_normal_matched[,-1]
 
 ```
 
@@ -1039,12 +1062,12 @@ methyl_M=log2(data_methylation_hm450_tumor_normal_matched/(1-data_methylation_hm
 
 ## Plot a histograk of the M values
 hist(as.matrix(methyl_M),
-     main = "Distribution of M-values in TCGA-LUSC methylation",
+     main = "Distribution of M-values in TCGA-LUAD methylation",
      xlab = "M-value",
      breaks = 75) ## Closer to normal distribution though still definitely not a perfect one
 
 ## Plot the expression distribution of the individual samples
-title <- "TCGA-LUSC methylation value distribution"
+title <- "TCGA-LUAD methylation value distribution"
 colz <- rep(c("Tumor","Normal"), length(methyl_M)/2)
 plotDensities(as.matrix(methyl_M), group=colz, main=title, legend ="topright", col = c("darkolivegreen3","brown2"))
 
@@ -1055,7 +1078,7 @@ plotDensities(as.matrix(methyl_M), group=colz, main=title, legend ="topright", c
 colz <- rep(c("red","black"), length(methyl_M)/2) # Get color values from T or NM group
 plotMDS(methyl_M,
         gene.selection = "common",
-        main = "PCA for TCGA-LUSC methylation data",
+        main = "PCA for TCGA-LUAD methylation data",
         col = colz,
         pch = 1
 )
@@ -1067,6 +1090,9 @@ legend("bottomleft",
        )  
 
 ## Very good tumor-normal separation
+
+
+
 ```
 
 ## 3.4 Differential methylation analysis using limma
@@ -1091,17 +1117,17 @@ fit2 <- eBayes(fit2)
 tT <- topTable(fit2, adjust = "BH", number = Inf)
 
 # Giving more descriptive name and colnames to list
-TCGA_LUSC_DMG <- tT
-TCGA_LUSC_DMG$Gene <- rownames(TCGA_LUSC_DMG)
-rownames(TCGA_LUSC_DMG) <- NULL
-TCGA_LUSC_DMG <- TCGA_LUSC_DMG %>%
+TCGA_LUAD_DMG <- tT
+TCGA_LUAD_DMG$Gene <- rownames(TCGA_LUAD_DMG)
+rownames(TCGA_LUAD_DMG) <- NULL
+TCGA_LUAD_DMG <- TCGA_LUAD_DMG %>%
   dplyr::select(., Gene, logFC, adj.P.Val) %>%
   dplyr::rename(., log2FC = logFC, FDR = adj.P.Val)
 
 # Giving a yet more descriptive name
-TCGA_LUSC_limma_DMG <- TCGA_LUSC_DMG
+TCGA_LUAD_limma_DMG <- TCGA_LUAD_DMG
 
-nrow(TCGA_LUSC_limma_DMG)
+nrow(TCGA_LUAD_limma_DMG)
 
 ### Saving output
 #write.table(TCGA_LUAD_limma_DMG, "../2_Outputs/5_Tumor_DMGs/TCGA_LUAD_limma_DMG_20250129.txt", sep = '\t')
