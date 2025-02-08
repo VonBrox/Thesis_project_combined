@@ -159,7 +159,6 @@ write(A1_TE_TM_linked_genes$Gene, "../2_Outputs/6_Linked_genes/A1_TE_TM_linked_g
 
 ## Expected overlap given independent datasets:
 print("Expected overlap:")
-
 (5981*2629*4772)/20000^2
 
 
@@ -297,17 +296,6 @@ log2FC cutoff A2: 0
 
 ## Save outputs
 ```{r}
-# write.table(A1_TE_TM_linked_genes, "../2_Outputs/6_Linked_genes/A1_TE_TM_linked_genes_20241204.txt", sep = '\t')
-# write.table(A1_TE_TM_A2_persistent_linked_genes, "../2_Outputs/6_Linked_genes/A1_TE_TM_A2_persistent_linked_genes_20241204.txt", sep = '\t')
-#write.table(A1_TE_TM_linked_genes, "../2_Outputs/6_Linked_genes/A1_TE_TM_linked_genes_0.01_0.1_0.01_0.6_0.01_0.1_20241205.txt", sep = '\t')
-#write.table(A1_TE_TM_linked_genes, "../2_Outputs/6_Linked_genes/A1_TE_TM_linked_genes_0.05_0_0.05_0_0.05_0_20241205.txt", sep = '\t')
-
-#write.table(A1_TE_TM_A2_persistent_linked_genes, "../2_Outputs/6_Linked_genes/A1_TE_TM_A2_persistent_linked_genes_0.05_0_0.05_0_0.05_0_20241205.txt", sep = '\t')
-
-#write.table(A1_TE_TM_linked_genes, "../2_Outputs/6_Linked_genes/A1_TE_TM_linked_genes_0.01_0_0.01_1_0.01_0.5_20241211.txt", sep = '\t')
-
-#write.table(A1_TE_TM_A2_persistent_linked_genes, "../2_Outputs/6_Linked_genes/A1_TE_TM_A2_persistent_linked_genes_0.01_0_0.01_1_0.01_0.5_20241211.txt", sep = '\t')
-
 
 ```
 

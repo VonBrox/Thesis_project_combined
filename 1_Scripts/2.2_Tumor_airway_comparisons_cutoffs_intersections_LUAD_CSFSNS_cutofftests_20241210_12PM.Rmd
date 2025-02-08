@@ -1,0 +1,540 @@
+---
+title: "Dataset Intersections"
+output: html_document
+date: "2024-12-11"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+2024/12/02: Now unlike the way I did it in the big combined script, here I am going to try out doing more stringent FDR cutoffs as well as fairly relaxed log2FC cutoffs. I may also change the methylation list input, in fact I probably should (either use limma with cbioportal or confirm results from the probe-wise version).
+
+2024/12/05: Some thoughts I have:
+
+- If I use quite stringent criteria (FDR cutoffs of 0.001 and log2FC cutoffs of 0.5, 1.5, and 0.5 respectively), I get 29 "linked genes" which have an interesting interaction network in STRING. (I picked the log2FC cutoffs by checking the histograms of log2FC values and trying to find cutoffs that left normally distributed-looking tails.)
+
+- If I use the most relaxed criteria possible (FDR cutoffs of 0.05 and log2FC cutoffs of 0) I get 27 "persistent linked" genes which have a somewhat interesting interaction network in STRING.
+
+- If I want to do pathway analysis and gene-list comparisons (comparing with outputs from other studies), it seems I will need a bigger gene list. So I will have to use "linked genes" with less stringent criteria, and not "persistent linked", because these are narrowed down to 27 with even the least stringent criteria. If I try this with the most relaxed criteria possible (FDR cutoffs of 0.05 and log2FC cutoffs of 0), I get 747 linked genes, which yield 8 significant pathways in GO.
+
+- If I am looking at meta-analysis comparisons across airway datasets, as well as survival curves, maybe I would be most interested in using the list of 27 "persistent linked" genes because we would want to back up the idea that these are definitely differentially expressed in smoker airways.
+
+# Comparing and filtering A1, TE, TM, and A2 to generate "linked genes" and "linked persistent genes" lists
+
+## Reading in datasets to intersect
+```{r}
+
+# A1
+GSE63127_CS_NS_limma        <- read.table("../2_Outputs/1_Airway_DEGs/GSE63127_CS_NS_limma_20241204.txt", header = TRUE)
+
+# T-E
+DGE_LUAD_T_NM_DESeq2        <- read.table("../2_Outputs/4_Tumor_DEGs/TE_T_NM_DEseq2_DEGs_20241204.txt")
+
+# T-M
+TCGA_LUAD_limma_DMG         <- read.table("../2_Outputs/5_Tumor_DMGs/TCGA_LUAD_limma_DMG_20241203.txt")
+
+# A2
+GSE7895_persistent_DEGs     <- read.table("../2_Outputs/1_Airway_DEGs/GSE7895_persistent_DEGs_20241127.txt")
+
+```
+
+#######
+
+# I. Using more stringent FDR cutoffs
+
+## I.i Testing FDR and log2FC cutoffs
+```{r}
+library(dplyr)
+### Testing FDR and log2FC cutoffs ###
+
+# A1 DEGs
+FDR_cutoff_A1 = 0.01
+log2FC_cutoff_A1 = 0.25
+
+print(paste0("A1 DEGs meeting FDR cutoff ", FDR_cutoff_A1, " and log2FC cutoff ", log2FC_cutoff_A1))
+nrow(GSE63127_CS_NS_limma[GSE63127_CS_NS_limma$adj.P.Val<FDR_cutoff_A1
+                                    & abs(GSE63127_CS_NS_limma$logFC)>log2FC_cutoff_A1,])
+
+hist(GSE63127_CS_NS_limma[GSE63127_CS_NS_limma$adj.P.Val<FDR_cutoff_A1
+                                    & abs(GSE63127_CS_NS_limma$logFC)>log2FC_cutoff_A1,]$logFC, breaks = 100)
+
+hist(log10(GSE63127_CS_NS_limma[GSE63127_CS_NS_limma$adj.P.Val<FDR_cutoff_A1
+                                    & abs(GSE63127_CS_NS_limma$logFC)>log2FC_cutoff_A1,]$adj.P.Val), breaks = 100)
+
+# TCGA-LUAD DEGs
+FDR_cutoff_TE = 0.001
+log2FC_cutoff_TE = 0.75
+
+print(paste0("TE DEGs meeting FDR cutoff ", FDR_cutoff_TE, " and log2FC cutoff ", log2FC_cutoff_TE))
+nrow(DGE_LUAD_T_NM_DESeq2[DGE_LUAD_T_NM_DESeq2$FDR<FDR_cutoff_TE
+                              & abs(DGE_LUAD_T_NM_DESeq2$log2FC)>log2FC_cutoff_TE,])
+
+hist(DGE_LUAD_T_NM_DESeq2[DGE_LUAD_T_NM_DESeq2$FDR<FDR_cutoff_TE
+                              & abs(DGE_LUAD_T_NM_DESeq2$log2FC)>log2FC_cutoff_TE,]$log2FC, breaks = 100)
+
+hist(log10(DGE_LUAD_T_NM_DESeq2[DGE_LUAD_T_NM_DESeq2$FDR<FDR_cutoff_TE
+                              & abs(DGE_LUAD_T_NM_DESeq2$log2FC)>log2FC_cutoff_TE,]$FDR), breaks = 100)
+
+
+# TCGA-LUAD DMGs limma
+FDR_cutoff_TM = 0.01
+log2FC_cutoff_TM = 0.25
+
+print(paste0("TM DMGs meeting FDR cutoff ", FDR_cutoff_TM, " and log2FC cutoff ", log2FC_cutoff_TM))
+nrow(TCGA_LUAD_limma_DMG[TCGA_LUAD_limma_DMG$FDR<FDR_cutoff_TM
+                               & abs(TCGA_LUAD_limma_DMG$log2FC)>log2FC_cutoff_TM,])
+
+hist(TCGA_LUAD_limma_DMG[TCGA_LUAD_limma_DMG$FDR<FDR_cutoff_TM
+                               & abs(TCGA_LUAD_limma_DMG$log2FC)>log2FC_cutoff_TM,]$log2FC, breaks = 100)
+
+hist(log10(TCGA_LUAD_limma_DMG[TCGA_LUAD_limma_DMG$FDR<FDR_cutoff_TM
+                               & abs(TCGA_LUAD_limma_DMG$log2FC)>log2FC_cutoff_TM,]$FDR), breaks = 100)
+
+
+```
+
+### Applying cutoffs and formatting consistently for merge ###
+```{r}
+GSE63127_CS_NS_limma_cutoff <- GSE63127_CS_NS_limma %>%
+  filter(abs(logFC)>log2FC_cutoff_A1) %>%
+  filter(adj.P.Val < FDR_cutoff_A1) %>%
+  dplyr::rename(., Gene = Gene.symbol, FDR_A1 = adj.P.Val, log2FC_A1 = logFC) %>%
+  dplyr::select(., Gene, FDR_A1, log2FC_A1)
+
+DGE_LUAD_T_NM_DESeq2_cutoff <- DGE_LUAD_T_NM_DESeq2 %>%
+  filter(abs(log2FC)>log2FC_cutoff_TE) %>%
+  filter(FDR < FDR_cutoff_TE) %>%
+  dplyr::rename(., FDR_TE = FDR, log2FC_TE = log2FC, Gene = gene) %>%
+  dplyr::select(., Gene, FDR_TE, log2FC_TE)
+
+TCGA_LUAD_limma_DMG_cutoff <- TCGA_LUAD_limma_DMG %>%
+  filter(abs(log2FC)>log2FC_cutoff_TM) %>%
+  filter(FDR < FDR_cutoff_TM) %>%
+  dplyr::rename(., FDR_TM = FDR, log2FC_TM = log2FC) %>%
+  dplyr::select(., Gene, FDR_TM, log2FC_TM)
+```
+
+
+### I.ii Intersection of A1 and TE DEGs
+```{r}
+## Merge the lists
+
+A1_TE_merged_DEGs <- GSE63127_CS_NS_limma_cutoff %>%
+  inner_join(., DGE_LUAD_T_NM_DESeq2_cutoff, by = "Gene") %>%
+  filter(sign(log2FC_A1)==sign(log2FC_TE)) # Filter to genes with same signs
+
+nrow(A1_TE_merged_DEGs)
+
+```
+
+### I.iii Intersection of A1/TE DEGs with TM DMGs
+```{r}
+## Merge the lists
+
+A1_TE_TM_linked_genes <- A1_TE_merged_DEGs %>%
+  inner_join(., TCGA_LUAD_limma_DMG_cutoff, by = "Gene") %>%
+  filter(sign(log2FC_A1)!=sign(log2FC_TM)) # Filter to genes with opposite sign
+
+nrow(A1_TE_TM_linked_genes)
+
+```
+
+
+### I.iv.1 Visualizing Spearman correlations of log2FC values
+```{r}
+## Visualizing Spearman correlations
+library(GGally)
+ggpairs(A1_TE_TM_linked_genes[, c("log2FC_A1", "log2FC_TE", "log2FC_TM")],
+  upper = list(continuous = wrap("cor", method = "spearman")),
+  lower = list(continuous = "points", combo = "facethist", discrete = "facetbar", na ="na"),
+  diag = list(continuous = "densityDiag", discrete = "barDiag", na = "naDiag"))
+
+```
+
+### I.iv.2 Visualizing multiple linear regression of the log2FC values
+```{r}
+mlr_airway_model <- lm(log2FC_A1 ~ log2FC_TE + log2FC_TM, data = A1_TE_TM_linked_genes)
+summary(mlr_airway_model)
+
+
+library(scatterplot3d)
+s3d <- scatterplot3d(x = A1_TE_TM_linked_genes$log2FC_A1, 
+              y = A1_TE_TM_linked_genes$log2FC_TE, 
+              z = A1_TE_TM_linked_genes$log2FC_TM,
+              main="Plotting airway expression vs. tumor expression vs. tumor methylation",
+              xlab = "log2FC(TE)",
+              ylab = "log2FC(TM)",
+              zlab = "log2FC(A1)",
+              pch = 19,
+              #color = colors_3d, # getting color values from methylation sign
+              color = "steelblue",
+              labels = A1_TE_TM_linked_genes$Gene,
+              type = "h",
+              #highlight.3d = TRUE, 
+              angle = 60
+              )
+s3d$plane3d(mlr_airway_model) # Add a plane based on the multiple linear regression model
+
+```
+
+OK here is an amazing interaction network I got:
+
+https://version-12-0.string-db.org/cgi/network?networkId=bK3IJNEMHJEy
+
+This was using the 29 linked genes given by the parameters:
+
+FDR_cutoff_A1=0.001
+log2FC_cutoff_A1=0.5
+
+FDR_cutoff_TE=0.001
+log2FC_cutoff_TE = 1.5
+
+FDR_cutoff_TM=0.001
+log2FC_cutoff_TM = 0.5
+
+Now to check via intersection with the "persistent" genes:
+
+
+## 5.3 Comparing and filtering A2 and "linked" genes to give "persistent linked genes"
+
+### 5.3.1 Applying cutoffs
+```{r}
+# For now, no cutoffs
+```
+
+### 5.3.2 Filtering by dataset intersection
+```{r}
+
+A1_TE_TM_A2_persistent_linked_genes <- A1_TE_TM_linked_genes %>%
+  dplyr::inner_join(., GSE7895_persistent_DEGs, by = "Gene") %>%
+  dplyr::filter(sign(log2FC_A1) == sign(CS_NS_A2)) # Ensure signs are the same between A1 and A2 CS vs NS
+
+nrow(A1_TE_TM_A2_persistent_linked_genes)
+
+A1_TE_TM_A2_persistent_linked_genes$Gene
+
+```
+
+### 5.3.3 Additional checks (correlation of log2FCs in A1 and A2)
+```{r}
+cor.test(A1_TE_TM_A2_persistent_linked_genes$log2FC_A1, y = A1_TE_TM_A2_persistent_linked_genes$CS_NS_A2, use = "everything",
+    method = "spearman")
+    
+ggplot(A1_TE_TM_A2_persistent_linked_genes, aes(x = log2FC_A1, y = CS_NS_A2)) +
+  geom_point(color = "blue", size = 3) +                # Scatter points
+  geom_smooth(method = "lm", se = FALSE, color = "black") + # Add a trend line +
+  theme_minimal()
+```
+
+
+Here is an interaction network for 27 persistent linked genes:
+https://version-12-0.string-db.org/cgi/network?networkId=bbJcDlu8tw5C
+
+This was using the 27 persistent linked genes given by the parameters:
+
+FDR_cutoff_A1=0.05
+log2FC_cutoff_A1=0
+
+FDR_cutoff_TE=0.05
+log2FC_cutoff_TE = 0
+
+FDR_cutoff_TM=0.05
+log2FC_cutoff_TM = 0
+
+FDR cutoff A2: 0.05
+log2FC cutoff A2: 0
+
+
+## Save outputs
+```{r}
+# write.table(A1_TE_TM_linked_genes, "../2_Outputs/6_Linked_genes/A1_TE_TM_linked_genes_20241204.txt", sep = '\t')
+# write.table(A1_TE_TM_A2_persistent_linked_genes, "../2_Outputs/6_Linked_genes/A1_TE_TM_A2_persistent_linked_genes_20241204.txt", sep = '\t')
+#write.table(A1_TE_TM_linked_genes, "../2_Outputs/6_Linked_genes/A1_TE_TM_linked_genes_0.01_0.1_0.01_0.6_0.01_0.1_20241205.txt", sep = '\t')
+#write.table(A1_TE_TM_linked_genes, "../2_Outputs/6_Linked_genes/A1_TE_TM_linked_genes_0.05_0_0.05_0_0.05_0_20241205.txt", sep = '\t')
+
+#write.table(A1_TE_TM_A2_persistent_linked_genes, "../2_Outputs/6_Linked_genes/A1_TE_TM_A2_persistent_linked_genes_0.05_0_0.05_0_0.05_0_20241205.txt", sep = '\t')
+
+#write.table(A1_TE_TM_linked_genes, "../2_Outputs/6_Linked_genes/A1_TE_TM_linked_genes_0.01_0_0.01_1_0.01_0.5_20241211.txt", sep = '\t')
+
+#write.table(A1_TE_TM_A2_persistent_linked_genes, "../2_Outputs/6_Linked_genes/A1_TE_TM_A2_persistent_linked_genes_0.01_0_0.01_1_0.01_0.5_20241211.txt", sep = '\t')
+
+# write.table(A1_TE_TM_linked_genes, "../2_Outputs/6_Linked_genes/A1_TE_TM_linked_genes_0.05_0_0.01_1_0.01_0.5_20241211.txt", sep = '\t')
+# 
+# write.table(A1_TE_TM_A2_persistent_linked_genes, "../2_Outputs/6_Linked_genes/A1_TE_TM_A2_persistent_linked_genes_0.05_0_0.01_1_0.01_0.5_20241211.txt", sep = '\t')
+
+# write.table(A1_TE_TM_linked_genes, "../2_Outputs/6_Linked_genes/A1_TE_TM_linked_genes_0.05_0.2_0.05_0.8_0.05_0.5_20241211.txt", sep = '\t')
+
+# write.table(A1_TE_TM_A2_persistent_linked_genes, "../2_Outputs/6_Linked_genes/A1_TE_TM_A2_persistent_linked_genes_0.05_0.2_0.05_0.8_0.05_0.5_20241211.txt", sep = '\t')
+
+# write.table(A1_TE_TM_linked_genes, "../2_Outputs/6_Linked_genes/A1_TE_TM_linked_genes_0.05_0.2_0.05_0.8_0.05_0.5_20241211.txt", sep = '\t')
+# 
+# write.table(A1_TE_TM_A2_persistent_linked_genes, "../2_Outputs/6_Linked_genes/A1_TE_TM_A2_persistent_linked_genes_0.05_0.2_0.05_0.8_0.05_0.5_20241211.txt", sep = '\t')
+
+# write.table(A1_TE_TM_linked_genes, "../2_Outputs/6_Linked_genes/A1_TE_TM_linked_genes_0.05_0.1_0.001_0.6_0.05_0.1_20241212.txt", sep = '\t')
+# 
+# write.table(A1_TE_TM_A2_persistent_linked_genes, "../2_Outputs/6_Linked_genes/A1_TE_TM_persistent_linked_genes_0.05_0.1_0.001_0.6_0.05_0.1_20241212.txt", sep = '\t')
+# 
+# # Pulling out gene names
+# A1_TE_TM_linked_gene_names <- unlist(as.character(A1_TE_TM_linked_genes$Gene))
+# writeLines(A1_TE_TM_linked_gene_names, con = "../2_Outputs/6_Linked_genes/A1_TE_TM_linked_gene_names_0.05_0.1_0.001_0.6_0.05_0.1_20241212.txt")
+# 
+# A1_TE_TM_A2_persistent_linked_gene_names <- unlist(as.character(A1_TE_TM_A2_persistent_linked_genes$Gene))
+# writeLines(A1_TE_TM_A2_persistent_linked_gene_names, con = "../2_Outputs/6_Linked_genes/A1_TE_TM_A2_persistent_linked_gene_names_0.05_0.1_0.001_0.6_0.05_0.1_20241212.txt")
+
+# A1_TE_TM_linked_gene_names <- unlist(as.character(A1_TE_TM_linked_genes$Gene))
+# writeLines(A1_TE_TM_linked_gene_names, con = "../2_Outputs/6_Linked_genes/A1_TE_TM_linked_gene_names_0.05_0.1_0.001_0.6_0.05_0.1_20241212.txt")
+# 
+# A1_TE_TM_A2_persistent_linked_gene_names <- unlist(as.character(A1_TE_TM_A2_persistent_linked_genes$Gene))
+# writeLines(A1_TE_TM_A2_persistent_linked_gene_names, con = "../2_Outputs/6_Linked_genes/A1_TE_TM_A2_persistent_linked_gene_names_0.05_0.1_0.001_0.6_0.05_0.1_20241212.txt")
+
+# A1_TE_TM_linked_gene_names <- unlist(as.character(A1_TE_TM_linked_genes$Gene))
+# writeLines(A1_TE_TM_linked_gene_names, con = "../2_Outputs/6_Linked_genes/A1_TE_TM_linked_gene_names_0.01_0.1_1e-7_0.5_0.01_0.1_20241212.txt")
+# 
+# A1_TE_TM_A2_persistent_linked_gene_names <- unlist(as.character(A1_TE_TM_A2_persistent_linked_genes$Gene))
+# writeLines(A1_TE_TM_A2_persistent_linked_gene_names, con = "../2_Outputs/6_Linked_genes/A1_TE_TM_A2_persistent_linked_gene_names_0.01_0.1_1e-7_0.5_0.01_0.1_20241212.txt")
+
+write.table(A1_TE_TM_linked_genes,"../2_Outputs/6_Linked_genes/A1_TE_TM_linked_genes_0.01_0.25_0.001_0.75_0.01_0.25_20250101.txt")
+
+write.table(A1_TE_TM_A2_persistent_linked_genes, "../2_Outputs/6_Linked_genes/A1_TE_TM_A2_persistent_linked_genes_0.01_0.25_0.001_0.75_0.01_0.25_20250101.txt")
+
+
+```
+
+
+### 2024/12/11:Reverse engineer acceptable cutoffs
+
+I am going to shamelessly just check the genes that end up in the "good" GO pathway analysis when I used the least stringent cutoffs and see which cutoffs I can apply that will keep most of these genes in the list while giving realistic numbers of input genes. These GO genes are derived from the latest version of pathway analysis, shown below:
+
+## GO with relaxed cutoffs resulting in significant pathways, and extracting the genes from these pathways
+```{r}
+
+# Load the required packages
+library(clusterProfiler, verbose = FALSE)
+library(enrichplot, verbose = FALSE)
+library(ggplot2, verbose = FALSE)
+organism = "org.Hs.eg.db" # Human annotation database download
+BiocManager::install(organism, character.only = TRUE, verbose = FALSE) 
+library(organism, character.only = TRUE, verbose = FALSE)
+
+
+A1_TE_TM_linked_genes <- read.table("../2_Outputs/6_Linked_genes/A1_TE_TM_linked_genes_0.05_0_0.05_0_0.05_0_20241205.txt", header = TRUE)
+
+# The log2FC of the airway dataset is what I am choosing for pathway analysis
+linked_gene_list_A1_sorted <- A1_TE_TM_linked_genes$log2FC_A1
+
+# name the vector
+names(linked_gene_list_A1_sorted) <- A1_TE_TM_linked_genes$Gene
+
+# sort the list in decreasing order (required for clusterProfiler)
+linked_gene_list_A1_sorted = sort(linked_gene_list_A1_sorted, decreasing = TRUE)
+
+# From the default on the website, I changed pAdjustMethod to "fdr", keyType to "SYMBOL". And there was a warning message that I should remove the nPerm parameter so I did that
+linked_gene_list_A1_sorted_gse <- clusterProfiler::gseGO(geneList=linked_gene_list_A1_sorted, 
+             ont ="ALL", 
+             keyType = "SYMBOL", 
+             #nPerm = 10000, 
+             minGSSize = 3, 
+             maxGSSize = 800, 
+             pvalueCutoff = 0.05, 
+             verbose = TRUE, 
+             OrgDb = organism, 
+             pAdjustMethod = "fdr")
+
+# To view the result
+linked_gene_list_A1_sorted_gse@result
+
+
+### 2024/12/11 a shameless approach to finding cutoffs: Check the genes from the result with the least stringent cutoffs and then see which cutoffs can be applied that keep most of these genes
+GO_genes <- as.character(paste0(linked_gene_list_A1_sorted_gse@result$core_enrichment))
+# Paste all elements together with "/" as the separator
+GO_genes <- paste(GO_genes, collapse = "/")
+# Split the string into separate elements
+GO_genes <- unlist(strsplit(GO_genes, split = "/"))
+# Keep only unique gene symbols
+GO_genes <- unique(GO_genes)
+
+# The linked genes appearing in the GO terms
+A1_TE_TM_linked_genes_for_GO <- A1_TE_TM_linked_genes[A1_TE_TM_linked_genes$Gene %in% GO_genes,]
+
+```
+
+
+# Attempting to optimize cutoffs to maximize number of GO genes while maintaining acceptable numbers of DEGs
+
+## Making boxplots to guide the cutoff selection
+```{r}
+
+library(tidyr)
+library(ggplot2)
+
+## FDRs ##
+
+# Reshape the FDR data from wide to long format
+A1_TE_TM_linked_genes_for_GO_FDRs_long <- A1_TE_TM_linked_genes_for_GO %>%
+  pivot_longer(cols = c(2,4,6), 
+               names_to = "Group", 
+               values_to = "Value") %>%
+  dplyr::select(Gene, Group, Value)
+
+# Take log10 values of FDRs
+A1_TE_TM_linked_genes_for_GO_FDRs_long$Value <- log10(A1_TE_TM_linked_genes_for_GO_FDRs_long$Value)
+
+# Create the boxplot for FDR values
+ggplot(A1_TE_TM_linked_genes_for_GO_FDRs_long, aes(x = Group, y = Value)) +
+  geom_boxplot(fill = "skyblue", color = "darkblue") +
+  theme_minimal() +
+  labs(title = "Boxplots for Selected FDRs in GO genes",
+       x = "Groups",
+       y = "Values") + 
+    scale_y_continuous(breaks = seq(floor(min(A1_TE_TM_linked_genes_for_GO_FDRs_long$Value)),
+                                  0,
+                                  by = 5))
+
+## log2FC values ##
+
+# Reshape the log2FC data from wide to long format
+A1_TE_TM_linked_genes_for_GO_log2FCs_long <- A1_TE_TM_linked_genes_for_GO %>%
+  pivot_longer(cols = c(3,5,7), 
+               names_to = "Group", 
+               values_to = "Value") %>%
+  dplyr::select(Gene, Group, Value)
+
+# Create the boxplot for FDR values
+ggplot(A1_TE_TM_linked_genes_for_GO_log2FCs_long , aes(x = Group, y = Value)) +
+  geom_boxplot(fill = "skyblue", color = "darkblue") +
+  theme_minimal() +
+  labs(title = "Boxplots for Selected log2FCs in GO genes",
+       x = "Groups",
+       y = "Values") + 
+  scale_y_continuous(breaks = seq(floor(min(A1_TE_TM_linked_genes_for_GO_log2FCs_long$Value)),
+                                  ceiling(max(A1_TE_TM_linked_genes_for_GO_log2FCs_long$Value)),
+                                  by = 0.5))
+
+
+
+```
+
+
+## Making functions to do dataset intersections and get number of resulting rows
+```{r}
+
+linked_gene_result <- function(GSE63127_CS_NS_limma, DGE_LUAD_T_NM_DESeq2, TCGA_LUAD_limma_DMG, 
+                               log2FC_cutoff_A1, FDR_cutoff_A1,
+                               log2FC_cutoff_TE, FDR_cutoff_TE,
+                               log2FC_cutoff_TM, FDR_cutoff_TM){
+  
+  GSE63127_CS_NS_limma_cutoff <- GSE63127_CS_NS_limma %>%
+    filter(abs(logFC)>log2FC_cutoff_A1) %>%
+    filter(adj.P.Val < FDR_cutoff_A1) %>%
+    dplyr::rename(., Gene = Gene.symbol, FDR_A1 = adj.P.Val, log2FC_A1 = logFC) %>%
+    dplyr::select(., Gene, FDR_A1, log2FC_A1)
+
+  DGE_LUAD_T_NM_DESeq2_cutoff <- DGE_LUAD_T_NM_DESeq2 %>%
+    filter(abs(log2FC)>log2FC_cutoff_TE) %>%
+    filter(FDR < FDR_cutoff_TE) %>%
+    dplyr::rename(., FDR_TE = FDR, log2FC_TE = log2FC, Gene = gene) %>%
+    dplyr::select(., Gene, FDR_TE, log2FC_TE)
+
+  TCGA_LUAD_limma_DMG_cutoff <- TCGA_LUAD_limma_DMG %>%
+    filter(abs(log2FC)>log2FC_cutoff_TM) %>%
+    filter(FDR < FDR_cutoff_TM) %>%
+    dplyr::rename(., FDR_TM = FDR, log2FC_TM = log2FC) %>%
+    dplyr::select(., Gene, FDR_TM, log2FC_TM)
+  
+  A1_TE_merged_DEGs <- GSE63127_CS_NS_limma_cutoff %>%
+    inner_join(., DGE_LUAD_T_NM_DESeq2_cutoff, by = "Gene") %>%
+    filter(sign(log2FC_A1)==sign(log2FC_TE)) # Filter to genes with same signs
+  
+  A1_TE_TM_linked_genes <- A1_TE_merged_DEGs %>%
+    inner_join(., TCGA_LUAD_limma_DMG_cutoff, by = "Gene") %>%
+    filter(sign(log2FC_A1)!=sign(log2FC_TM)) # Filter to genes with opposite sign
+  
+  return(nrow(A1_TE_TM_linked_genes))
+
+}
+```
+
+
+## Trying many combinations of cutoff values and observing effect on DEGs count and number of GO genes lost
+```{r}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+
+# Define ranges for cutoffs
+fdr_cutoffs_A1 <- c(0.01, 0.05)
+fdr_cutoffs_TE <- c(0.001, 0.01, 0.05)
+fdr_cutoffs_TM <- c(0.01, 0.05)
+
+log2fc_cutoffs_A1 <- c(0.25, 0.5)
+log2fc_cutoffs_TE <- c(0.25, 0.75, 1)
+log2fc_cutoffs_TM <- c(0.25, 0.5)
+
+# Create all combinations of cutoffs for A1, TE, and TM
+cutoff_combinations <- expand.grid(FDR_A1 = fdr_cutoffs_A1,
+                                    FDR_TE = fdr_cutoffs_TE,
+                                    FDR_TM = fdr_cutoffs_TM,
+                                    log2FC_A1 = log2fc_cutoffs_A1,
+                                    log2FC_TE = log2fc_cutoffs_TE,
+                                    log2FC_TM = log2fc_cutoffs_TM)
+
+# Calculate rows removed for each combination, and remaining DEGs in each dataset after cutoffs are applied
+removed_GO_rows <- integer()
+A1_DEGs <- integer()
+TE_DEGs <- integer()
+TM_DMGs <- integer()
+linked_genes <- integer()
+
+for (row in 1:nrow(cutoff_combinations)){
+  
+  # Give number of rows removed from list of genes in the GO pathways
+  removed_GO_rows <- c(removed_GO_rows,
+                    nrow(A1_TE_TM_linked_genes_for_GO) - 
+                      nrow(
+                        A1_TE_TM_linked_genes_for_GO %>%
+                          filter(FDR_A1 < cutoff_combinations$FDR_A1[row],  # Access FDR_A1 from cutoff_combinations
+                                 FDR_TE < cutoff_combinations$FDR_TE[row],
+                                 FDR_TM < cutoff_combinations$FDR_TM[row],
+                                 abs(log2FC_A1) > cutoff_combinations$log2FC_A1[row],
+                                 abs(log2FC_TE) > cutoff_combinations$log2FC_TE[row],
+                                 abs(log2FC_TM) > cutoff_combinations$log2FC_TM[row])
+                      ))
+  
+  # Give number of remaining A1 DEGs
+  A1_DEGs_curr <- GSE63127_CS_NS_limma[GSE63127_CS_NS_limma$adj.P.Val<cutoff_combinations$FDR_A1[row]
+                                    & abs(GSE63127_CS_NS_limma$logFC)>cutoff_combinations$log2FC_A1[row],]
+  A1_DEGs <- c(A1_DEGs, nrow(A1_DEGs_curr))
+  
+  # Give number of remaining TE DEGs
+  TE_DEGs_curr <- DGE_LUAD_T_NM_DESeq2[DGE_LUAD_T_NM_DESeq2$FDR<cutoff_combinations$FDR_TE[row]
+                              & abs(DGE_LUAD_T_NM_DESeq2$log2FC)>cutoff_combinations$log2FC_TE[row],]
+  TE_DEGs <- c(TE_DEGs, nrow(TE_DEGs_curr))
+  
+  # Give number of remaining TM DMGs
+  TM_DMGs_curr <- TCGA_LUAD_limma_DMG[TCGA_LUAD_limma_DMG$FDR<cutoff_combinations$FDR_TM[row]
+                               & abs(TCGA_LUAD_limma_DMG$log2FC)>cutoff_combinations$log2FC_TM[row],]
+  TM_DMGs <- c(TM_DMGs,nrow(TM_DMGs_curr))
+  
+  # Give number of "linked genes" resulting using my function
+  linked_genes <- c(linked_genes, linked_gene_result(A1_DEGs_curr, TE_DEGs_curr, TM_DMGs_curr,
+                                                     cutoff_combinations$log2FC_A1[row], cutoff_combinations$FDR_A1[row],
+                                                     cutoff_combinations$log2FC_TE[row], cutoff_combinations$FDR_TE[row],
+                                                     cutoff_combinations$log2FC_TM[row], cutoff_combinations$FDR_TM[row]))
+  
+}
+
+cutoff_combinations$removed_GO_rows <- removed_GO_rows
+cutoff_combinations$A1_DEGs <- A1_DEGs
+cutoff_combinations$TE_DEGs <- TE_DEGs
+cutoff_combinations$TM_DMGs <- TM_DMGs
+cutoff_combinations$linked_genes <- linked_genes
+
+# Filter to acceptable ranges for the 3 datasets, and then pick a combination with the fewest GO genes lost
+cutoff_combinations_filtered <- cutoff_combinations %>%
+  filter(A1_DEGs %in% 1000:7500) %>%
+  filter(TE_DEGs %in% 4000:7500) %>%
+  filter(TM_DMGs %in% 4000:7500)
+
+```
+

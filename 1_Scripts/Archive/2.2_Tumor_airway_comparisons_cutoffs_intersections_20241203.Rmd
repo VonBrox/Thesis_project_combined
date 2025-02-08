@@ -36,8 +36,8 @@ GSE7895_persistent_DEGs <- read.table("../2_Outputs/1_Airway_DEGs/GSE7895_persis
 ### Testing FDR and log2FC cutoffs ###
 
 # A1 DEGs
-FDR_cutoff_A1=0.001
-log2FC_cutoff_A1=0.5
+FDR_cutoff_A1=0.01
+log2FC_cutoff_A1=0.25
 nrow(GSE63127_CS_NS_GEO2R_limma_sig[GSE63127_CS_NS_GEO2R_limma_sig$adj.P.Val<FDR_cutoff_A1
                                     & abs(GSE63127_CS_NS_GEO2R_limma_sig$logFC)>log2FC_cutoff_A1,])
 
@@ -46,7 +46,7 @@ hist(GSE63127_CS_NS_GEO2R_limma_sig[GSE63127_CS_NS_GEO2R_limma_sig$adj.P.Val<FDR
 
 # TCGA-LUAD DEGs
 FDR_cutoff_TE=0.001
-log2FC_cutoff_TE = 1.5
+log2FC_cutoff_TE = 0.75
 
 nrow(DGE_LUAD_T_NM_DESeq2_sig[DGE_LUAD_T_NM_DESeq2_sig$FDR<FDR_cutoff_TE
                               & abs(DGE_LUAD_T_NM_DESeq2_sig$log2FC)>log2FC_cutoff_TE,])
@@ -57,8 +57,8 @@ hist(DGE_LUAD_T_NM_DESeq2_sig[DGE_LUAD_T_NM_DESeq2_sig$FDR<FDR_cutoff_TE
 
 # TCGA-LUAD DMGs limma
 
-FDR_cutoff_TM=0.001
-log2FC_cutoff_TM = 0.5
+FDR_cutoff_TM=0.01
+log2FC_cutoff_TM = 0.25
 nrow(TCGA_LUAD_limma_DMG[TCGA_LUAD_limma_DMG$FDR<FDR_cutoff_TM
                                & abs(TCGA_LUAD_limma_DMG$log2FC)>log2FC_cutoff_TM,])
 

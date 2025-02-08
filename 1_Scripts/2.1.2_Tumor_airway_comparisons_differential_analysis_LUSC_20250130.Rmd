@@ -1,19 +1,17 @@
 ---
-title: "Tumor airway comparisons combined script"
+title: "Tumor airway comparisons (LUSC) combined script"
 output: html_document
-date: "2024-12-04"
+date: "2025-02-05"
 ---
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-This script will include all steps in the "main pipeline" part of my thesis project. This includes differential analysis of the reference airway current vs never smoker dataset (A1, GSE63127), differential expression analysis of the TCGA-LUAD lung adenocarcinoma expression and methylation datasets, and the reference "persistent" airway current vs former vs never smoker dataset (A2, GSE7895). This includes all normalization, quality control, and filtering steps.
 
-Notes: 
-- 2024/12/04: For this version of the pipeline, I am using limma for A1, DESeq2 for T-E, and limma for T-M, which uses the cbioportal-derived data. I have gathered that the Wilcoxon signed-rank test is better for smaller sample sizes (I can back this up with sources later). I am also experimenting with applying stringent FDR cutoffs and applying log2FC cutoffs based on how they affect the histograms of expression distribution (keeping the more normally distributed bits). Down the line I may want to use the probewise processing of T-M instead of the cbioportal version, as they do not provide a good explanation of their preprocessing.
+2025-02-05: Note that this has  been altered to use the squamous cell lung cancer datasets from TCGA for TE and TM rather than the TCGA-LUAD from before
 
-- 2025/01/29: I am going to use limma for the RNAseq data instead of DESeq2, and will eliminate never smokers from TE and TM. I may also remove current smokers when I do the comparison for "persistent linked" genes, not sure. 
+This script will include all steps in the "main pipeline" part of my thesis project. This includes differential analysis of the reference airway current vs never smoker dataset (A1, GSE63127), differential expression analysis of the TCGA-LUSC lung adenocarcinoma expression and methylation datasets, and the reference "persistent" airway current vs former vs never smoker dataset (A2, GSE7895). This includes all normalization, quality control, and filtering steps.
 
 - For A1 I use series matrices with RMA normalization as preprocessing, then do log2 normalization, batch correction for submission date, and correction for unknown source of variation (using ComBat)
 - For T-E I remove an outlier tumor-normal pair
@@ -472,7 +470,6 @@ legend("topleft",
 design <- model.matrix(~group + 0, gset)
 colnames(design) <- levels(gs)
 
-
 ## Crucial bit: Replace the expression values in gset with the batch corrected ones ##
 exprs(gset) <- as.matrix(exprs_matrix_combat_2)
 
@@ -874,7 +871,7 @@ write.table(TCGA_LUSC_limma_DEG, "../2_Outputs/4_Tumor_DEGs/TCGA_LUSC_limma_DEG_
 
 ```{r, fig.width=10, fig.height=6}
 
-log2FC_cutoff_TE <- 1.5
+log2FC_cutoff_TE <- 0.75
 FDR_cutoff_TE <- 0.001
 
 v_TE <- EnhancedVolcano::EnhancedVolcano(
