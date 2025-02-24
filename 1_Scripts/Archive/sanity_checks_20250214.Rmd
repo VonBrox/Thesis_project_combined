@@ -1,0 +1,304 @@
+---
+title: "Sanity checks"
+output: html_document
+date: "2025-02-14"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+I want to try to give rock-solid evidence that my inputs for A1, TE, TM, and A2 are done properly. So, I will look in literature, do a bunch of comparisons, and try to nail this stuff down.
+
+## Reading in multiple versions of A1, TE, TM, and A2 to generate "linked genes" and "linked persistent genes" lists
+
+## Reading in datasets to intersect
+```{r}
+
+# A1
+GSE63127_CS_NS_limma_DEG           <- read.table("../2_Outputs/1_Airway_DEGs/GSE63127_CS_NS_limma_20241204.txt", header = TRUE)
+
+# T-E
+## First looking at the versions where I kept all CS FS NS
+TCGA_LUAD_DESeq2_CSFSNS_DEG        <- read.table("../2_Outputs/4_Tumor_DEGs/TE_T_NM_DEseq2_DEGs_20241204.txt")
+TCGA_LUAD_limma_CSFSNS_DEG         <- read.table("../2_Outputs/4_Tumor_DEGs/TCGA_LUAD_limma_DEG_CSFSNS_20250131.txt")
+
+# T-M
+TCGA_LUAD_limma_CSFSNS_DMG         <- read.table("../2_Outputs/5_Tumor_DMGs/TCGA_LUAD_limma_DMG_20241203.txt")
+
+# A2
+GSE7895_persistent_DEG             <- read.table("../2_Outputs/1_Airway_DEGs/GSE7895_persistent_DEGs_20241127.txt")
+
+```
+
+#######
+
+
+## Testing correlation of TE and TM since they are shared cohorts
+
+```{r}
+library(ggvenn)
+
+# First trying an intersection of TE & TM (assuming we are keeping all CSFSNS)and just looking at shared genes
+
+### Venn diagram: ###
+
+gene_lists <- list(
+  "TCGA_LUAD_limma_CSFSNS_DEG" = TCGA_LUAD_limma_CSFSNS_DEG$Gene,
+  "TCGA_LUAD_limma_CSFSNS_DMG" = TCGA_LUAD_limma_CSFSNS_DMG$Gene
+)
+
+# Create the Venn diagram
+ggvenn::ggvenn(gene_lists) 
+# Looks like about 56 % are shared, not great as a sanity check considering it's the same cohort/dataset and no cutoffs are yet applied...
+
+###
+
+### Plotting log2FC values:###
+TCGA_LUAD_limma_CSFSNS_DEG_DMG <- inner_join(TCGA_LUAD_limma_CSFSNS_DEG, TCGA_LUAD_limma_CSFSNS_DMG, by = "Gene", suffix = c("_DEG", "_DMG"))
+
+ggplot(TCGA_LUAD_limma_CSFSNS_DEG_DMG, aes(x = log2FC_DEG, y = log2FC_DMG )) +
+  geom_point()
+
+# Looks like broadly speaking there is no correlation, but maybe this is not a concern... should I not be plotting the mean expression values versus mean methylation values in tumor rather than log2FC for T vs NM for both? And even then, why would I expect to see correlation?...
+
+## Next plotting mean expression levels/methylation levels?
+
+
+```
+
+
+## Checking other datasets and literature for TE DEGs and DMGs support
+
+```{r}
+
+library(ggvenn)
+library(ggplot2)
+
+## Read in the table of differentially expressed genes from the publication 26292924
+LUAD_LUAD_FDRs_26292924 <- read.table('../4_TCGA_data/LUAD_LUAD_FDRs_26292924.txt', header = T)
+
+# Extract just the LUAD info
+LUAD_FDRs_26292924 <- LUAD_LUAD_FDRs_26292924[,c('LUAD', 'FDR_LUAD')]
+colnames(LUAD_FDRs_26292924) <- c('Gene', 'FDR_LUAD')
+
+# First just check the genes in common
+LUAD_genes_26292924 <- LUAD_FDRs_26292924$Gene
+LUAD_genes_limma <- TCGA_LUAD_limma_CSFSNS_DEG$Gene
+
+gene_lists <- list(
+  LUAD_genes_26292924 = LUAD_genes_26292924,
+  LUAD_genes_limma = LUAD_genes_limma
+)
+
+ggvenn(gene_lists, 
+       fill_color = c("skyblue", "lightgreen"), 
+       stroke_size = 0.5, 
+       set_name_size = 5)
+## That's odd that only 50% of gene names are matching here...
+
+## Anyway, I want to try comparing the FDRs here
+LUAD_genes_comparing_26292924_limma <- inner_join(LUAD_FDRs_26292924, TCGA_LUAD_limma_CSFSNS_DEG, by = 'Gene')
+colnames(LUAD_genes_comparing_26292924_limma) <- c("Gene", "FDR_LUAD_26292924","log2FC_LUAD_limma", "FDR_LUAD_limma")
+
+ggplot(LUAD_genes_comparing_26292924_limma, aes(x=FDR_LUAD_26292924, y=FDR_LUAD_limma)) +
+    geom_point(shape=1) # +      # Use hollow circles
+    #coord_trans(y ='log10', x='log10')
+## NO correlation AT ALL!!!
+
+
+## Now I want to see how many are <0.05 for my limma versus the FDRs from this publication:
+nrow(LUAD_genes_comparing_26292924_limma[LUAD_genes_comparing_26292924_limma$FDR_LUAD_26292924<0.05,])
+# 2760
+nrow(LUAD_genes_comparing_26292924_limma[LUAD_genes_comparing_26292924_limma$FDR_LUAD_limma<0.05,])
+# 7813
+
+# Soo mine is less stringent?
+
+# I wonder how their FDRs from 26292924 compare to the FDRs in the GEPIA dataset. 
+# Doing spot checks: I see lotsa differences here too. For example see ADAMTSL2, FNBP4. Way different between the two...
+
+## The other bit of literature I found is 37938580 which when I look at supplemental table for Figure 3ab and do spot checks, I see bits of agreement and disagreement
+
+
+
+
+
+```
+
+
+### Compare my DESEQ2 version of the DEGs with my limma version of the DEGs to try to figure out why they are so different and why the DESeq2 version seems to be better & agree more with stuff I am seeing in literature in terms of top genes and approximate expression levels?
+```{r}
+
+## Generally what I am seeing with these spot checks of individual genes is more instances where the DESEQ2 version of my DEGs is more closely agreeing with stuff I am seeing in literature than the limma version, making me wonder if I did something wrong when I switched over to limma. So I am going to check just how much these 2 versions of my DEGs differ from each other.
+
+gene_lists <- list(
+  TCGA_LUAD_DESeq2_CSFSNS_DEG_genes = TCGA_LUAD_DESeq2_CSFSNS_DEG$gene,
+  TCGA_LUAD_limma_CSFSNS_DEG_genes = TCGA_LUAD_limma_CSFSNS_DEG$Gene
+)
+
+ggvenn(gene_lists, 
+       fill_color = c("skyblue", "lightgreen"), 
+       stroke_size = 0.5, 
+       set_name_size = 5)
+## 99% shared, that's good, but kinda makes sense because I started with exactly the same list for both
+
+### Plotting log2FC values:###
+colnames(TCGA_LUAD_DESeq2_CSFSNS_DEG)[4] <- 'Gene'
+TCGA_LUAD_DESeq2_limma_CSFSNS_DEG <- inner_join(TCGA_LUAD_limma_CSFSNS_DEG, TCGA_LUAD_DESeq2_CSFSNS_DEG, by = "Gene", suffix = c("_limma", "_Deseq2"))
+
+ggplot(TCGA_LUAD_DESeq2_limma_CSFSNS_DEG, aes(x = log2FC_limma, y = log2FC_Deseq2 )) +
+  geom_point()
+
+ggplot(TCGA_LUAD_DESeq2_limma_CSFSNS_DEG, aes(x = FDR_limma, y = FDR_Deseq2 )) +
+  geom_point()
+## No correlation at all!!! wtf, I think there is something seriously wrong with the limma version...
+nrow(TCGA_LUAD_DESeq2_limma_CSFSNS_DEG[TCGA_LUAD_DESeq2_limma_CSFSNS_DEG$log2FC_limma<0.05,])
+nrow(TCGA_LUAD_DESeq2_limma_CSFSNS_DEG[TCGA_LUAD_DESeq2_limma_CSFSNS_DEG$log2FC_Deseq2<0.05,])
+# In this case it's fairly similar, but still, something is very wrong
+
+```
+
+Next order of business: 
+
+-Confirm sufficiently to myself that the DESeq2 version seems more reliable
+-Try to fix the limma version so that the results look more like the deseq2 version
+-If successful, fix it for all versions (excluding NS and doing LUSC)
+-If not successful, use Deseq2 for all the versions and justify the choice.
+
+
+
+============
+
+
+## Testing FDR and log2FC cutoffs
+```{r}
+library(dplyr)
+### Testing FDR and log2FC cutoffs ###
+
+# A1 DEGs
+FDR_cutoff_A1 = 0.01
+log2FC_cutoff_A1 = 0.25
+
+print(paste0("A1 DEGs meeting FDR cutoff ", FDR_cutoff_A1, " and log2FC cutoff ", log2FC_cutoff_A1))
+nrow(GSE63127_CS_NS_limma[GSE63127_CS_NS_limma$adj.P.Val<FDR_cutoff_A1
+                                    & abs(GSE63127_CS_NS_limma$logFC)>log2FC_cutoff_A1,])
+
+hist(GSE63127_CS_NS_limma[GSE63127_CS_NS_limma$adj.P.Val<FDR_cutoff_A1
+                                    & abs(GSE63127_CS_NS_limma$logFC)>log2FC_cutoff_A1,]$logFC, breaks = 100)
+
+hist(log10(GSE63127_CS_NS_limma[GSE63127_CS_NS_limma$adj.P.Val<FDR_cutoff_A1
+                                    & abs(GSE63127_CS_NS_limma$logFC)>log2FC_cutoff_A1,]$adj.P.Val), breaks = 100)
+
+# TCGA-LUAD DEGs
+FDR_cutoff_TE = 0.001
+log2FC_cutoff_TE = 0.75
+
+print(paste0("TE DEGs meeting FDR cutoff ", FDR_cutoff_TE, " and log2FC cutoff ", log2FC_cutoff_TE))
+nrow(DGE_LUAD_T_NM_DESeq2[DGE_LUAD_T_NM_DESeq2$FDR<FDR_cutoff_TE
+                              & abs(DGE_LUAD_T_NM_DESeq2$log2FC)>log2FC_cutoff_TE,])
+
+hist(DGE_LUAD_T_NM_DESeq2[DGE_LUAD_T_NM_DESeq2$FDR<FDR_cutoff_TE
+                              & abs(DGE_LUAD_T_NM_DESeq2$log2FC)>log2FC_cutoff_TE,]$log2FC, breaks = 100)
+
+hist(log10(DGE_LUAD_T_NM_DESeq2[DGE_LUAD_T_NM_DESeq2$FDR<FDR_cutoff_TE
+                              & abs(DGE_LUAD_T_NM_DESeq2$log2FC)>log2FC_cutoff_TE,]$FDR), breaks = 100)
+
+
+# TCGA-LUAD DMGs limma
+FDR_cutoff_TM = 0.01
+log2FC_cutoff_TM = 0.25
+
+print(paste0("TM DMGs meeting FDR cutoff ", FDR_cutoff_TM, " and log2FC cutoff ", log2FC_cutoff_TM))
+nrow(TCGA_LUAD_limma_DMG[TCGA_LUAD_limma_DMG$FDR<FDR_cutoff_TM
+                               & abs(TCGA_LUAD_limma_DMG$log2FC)>log2FC_cutoff_TM,])
+
+hist(TCGA_LUAD_limma_DMG[TCGA_LUAD_limma_DMG$FDR<FDR_cutoff_TM
+                               & abs(TCGA_LUAD_limma_DMG$log2FC)>log2FC_cutoff_TM,]$log2FC, breaks = 100)
+
+hist(log10(TCGA_LUAD_limma_DMG[TCGA_LUAD_limma_DMG$FDR<FDR_cutoff_TM
+                               & abs(TCGA_LUAD_limma_DMG$log2FC)>log2FC_cutoff_TM,]$FDR), breaks = 100)
+
+
+```
+
+### Applying cutoffs and formatting consistently for merge ###
+```{r}
+GSE63127_CS_NS_limma_cutoff <- GSE63127_CS_NS_limma %>%
+  filter(abs(logFC)>log2FC_cutoff_A1) %>%
+  filter(adj.P.Val < FDR_cutoff_A1) %>%
+  dplyr::rename(., Gene = Gene.symbol, FDR_A1 = adj.P.Val, log2FC_A1 = logFC) %>%
+  dplyr::select(., Gene, FDR_A1, log2FC_A1)
+
+DGE_LUAD_T_NM_DESeq2_cutoff <- DGE_LUAD_T_NM_DESeq2 %>%
+  filter(abs(log2FC)>log2FC_cutoff_TE) %>%
+  filter(FDR < FDR_cutoff_TE) %>%
+  dplyr::rename(., FDR_TE = FDR, log2FC_TE = log2FC, Gene = gene) %>%
+  dplyr::select(., Gene, FDR_TE, log2FC_TE)
+
+TCGA_LUAD_limma_DMG_cutoff <- TCGA_LUAD_limma_DMG %>%
+  filter(abs(log2FC)>log2FC_cutoff_TM) %>%
+  filter(FDR < FDR_cutoff_TM) %>%
+  dplyr::rename(., FDR_TM = FDR, log2FC_TM = log2FC) %>%
+  dplyr::select(., Gene, FDR_TM, log2FC_TM)
+```
+
+
+### I.ii Intersection of A1 and TE DEGs
+```{r}
+## Merge the lists
+
+A1_TE_merged_DEGs <- GSE63127_CS_NS_limma_cutoff %>%
+  inner_join(., DGE_LUAD_T_NM_DESeq2_cutoff, by = "Gene") %>%
+  filter(sign(log2FC_A1)==sign(log2FC_TE)) # Filter to genes with same signs
+
+nrow(A1_TE_merged_DEGs)
+
+```
+
+### I.iii Intersection of A1/TE DEGs with TM DMGs
+```{r}
+## Merge the lists
+
+A1_TE_TM_linked_genes <- A1_TE_merged_DEGs %>%
+  inner_join(., TCGA_LUAD_limma_DMG_cutoff, by = "Gene") %>%
+  filter(sign(log2FC_A1)!=sign(log2FC_TM)) # Filter to genes with opposite sign
+
+nrow(A1_TE_TM_linked_genes)
+
+```
+
+
+## 5.3 Comparing and filtering A2 and "linked" genes to give "persistent linked genes"
+
+### 5.3.1 Applying cutoffs
+```{r}
+# For now, no cutoffs
+```
+
+### 5.3.2 Filtering by dataset intersection
+```{r}
+
+A1_TE_TM_A2_persistent_linked_genes <- A1_TE_TM_linked_genes %>%
+  dplyr::inner_join(., GSE7895_persistent_DEGs, by = "Gene") %>%
+  dplyr::filter(sign(log2FC_A1) == sign(CS_NS_A2)) # Ensure signs are the same between A1 and A2 CS vs NS
+
+nrow(A1_TE_TM_A2_persistent_linked_genes)
+
+A1_TE_TM_A2_persistent_linked_genes$Gene
+
+```
+
+### 5.3.3 Additional checks (correlation of log2FCs in A1 and A2)
+```{r}
+cor.test(A1_TE_TM_A2_persistent_linked_genes$log2FC_A1, y = A1_TE_TM_A2_persistent_linked_genes$CS_NS_A2, use = "everything",
+    method = "spearman")
+    
+ggplot(A1_TE_TM_A2_persistent_linked_genes, aes(x = log2FC_A1, y = CS_NS_A2)) +
+  geom_point(color = "blue", size = 3) +                # Scatter points
+  geom_smooth(method = "lm", se = FALSE, color = "black") + # Add a trend line +
+  theme_minimal()
+```
+
+
+
