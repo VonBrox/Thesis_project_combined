@@ -29,7 +29,7 @@ colnames(xena_LUAD_T_N_DEG)[2] <- "log2FC"
 colnames(xena_LUAD_T_N_DEG)[6] <- "FDR"
 
 ## Reading in the list from publication PMID 26292924
-PMID26292924_LUAD_LUSC_FDRs <- read.table("../4_TCGA_data/PMID26292924_LUAD_LUSC_FDRs.txt")
+PMID26292924_LUAD_LUSC_FDRs <- read.table("../4_TCGA_data/PMID26292924_LUAD_LUSC_FDRs.txt", header = T)
 
 ```
 
@@ -148,6 +148,83 @@ ggplot(TE_xena_comparison_filtered_2, aes(x = log2FC_TE, y = log2FC_xena)) +
 
 ## Comparing TE with PMID 26292924 list
 ```{r}
+
+#### Comparing number of rows with given cutoffs
+
+### T-E
+FDR_cutoff_TE = 0.001
+
+print(paste0("TE DEGs meeting FDR cutoff ", FDR_cutoff_TE))
+nrow(TCGA_LUAD_limma_DEG_CSFSNS[TCGA_LUAD_limma_DEG_CSFSNS$FDR<FDR_cutoff_TE,])
+
+### 26292924
+FDR_cutoff_26292924 = 0.001
+
+print(paste0("26292924 DEGs meeting FDR cutoff ", FDR_cutoff_26292924))
+nrow(PMID26292924_LUAD_LUSC_FDRs[PMID26292924_LUAD_LUSC_FDRs$FDR_LUAD<FDR_cutoff_26292924,])
+
+## Well this study used edgeR rather than limma, so it could explain this difference somewhat.
+
+## Plotting FDRs to look for commonality
+
+## Combine the tables of TE and 26292924 LUAD
+PMID26292924_LUAD_FDRs <- PMID26292924_LUAD_LUSC_FDRs %>%
+  select(LUAD, FDR_LUAD) %>%
+  rename(., LUAD = "Gene", FDR_LUAD = "FDR")
+PMID26292924_LUAD_FDRs$FDR <- as.numeric(PMID26292924_LUAD_FDRs$FDR)
+
+TE_26292924_comparison <- TCGA_LUAD_limma_DEG_CSFSNS %>%
+  inner_join(., PMID26292924_LUAD_FDRs, by = "Gene", suffix = c("_TE", "_26292924"))
+
+### Plot the FDR values from both for all genes
+ggplot(TE_26292924_comparison, aes(x = FDR_TE, y = FDR_26292924)) +
+  geom_point() +
+  scale_x_log10() +
+  scale_y_log10()
+# Well it at least looks like there is sort of a general trend of agreement here. Big FDR in one is big FDR in the other.
+
+```
+
+I could look for another study I guess.
+UALCAN database shows similar top genes.
+I think this should be enough evidence to show that the TE calculation is fine.
+
+Now I want to do sanity checks for TM.
+I couldn't see a way to do it on xena, gepia2, or ualcan.
+I can find a big study hopefully.
+The thing suggested by deboer was to just try comparing TE and TM without any filters, and you'd hope to see an inverse relationship overall probably... not fully formulated that thought yet.
+
+Note: I should double check in all my 3 versions of the analysis that I am pulling in the right version of the methylation data for the subsequent intersections. Should organize that out better etc.
+
+## Read in TM
+```{r}
+# T-M
+TCGA_LUAD_limma_DMG <- read.table("../2_Outputs/5_Tumor_DMGs/TCGA_LUAD_limma_DMG_20241203.txt")
+## Should double check this is the right version with CS FS NS and not just CS FS
+```
+
+## Compare TE and TM
+```{r}
+
+TE_TM_comparison <- TCGA_LUAD_limma_DEG_CSFSNS %>%
+  inner_join(., TCGA_LUAD_limma_DMG , by = "Gene", suffix = c("_TE", "_TM"))
+
+ggplot(TE_TM_comparison, aes(x = log2FC_TE, y = log2FC_TM)) +
+  geom_point()
+
+## Sort of a rough inverse correlation emerging there
+## What if I push the FDR
+
+FDR_cutoff_TE <- 10^-10
+FDR_cutoff_TM <- 10^-10
+
+TE_TM_comparison_filtered <- TE_TM_comparison %>%
+  filter(FDR_TE <= FDR_cutoff_TE & FDR_TM <= FDR_cutoff_TM)
+
+ggplot(TE_TM_comparison_filtered, aes(x = log2FC_TE, y = log2FC_TM)) +
+  geom_point()
+
+# I think the inverse correlation gets better as you push up the FDR. Note I am not filtering for sign at all here. Interesting.
 
 ```
 
